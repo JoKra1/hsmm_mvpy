@@ -541,19 +541,79 @@ def LOOCV(data, subject, n_bumps, initial_fit, sfreq, bump_width=50):
     likelihood = model_left_out.calc_EEG_50h(fit.magnitudes, fit.parameters, n_bumps,True)
     return likelihood, subject
 
-def loocv_mp(init, unstacked_data, bests, cpus=2, verbose=True):
+def __loocv_backwards(data, subject, sfreq, bump_width=50, cpus=2, max_starting_points=1):
+    '''
+    Calculates backward estimate on data excluding subject currently in the held-out set.
+
+    Parameters
+    ----------
+    data : xarray
+        xarray data from transform_data() 
+    subject : str
+        name of the subject to remove
+    sfreq : float
+        Sampling frequency of the data
+    bump_width : float
+        length of the bumps in milliseconds
+    '''
+    from hsmm_mvpy.models import hsmm
+
+    subjects_idx = data.participant.values
+    
+    # Extracting data without left out subject
+    stacked_loo = stack_data(data.sel(participant= subjects_idx[subjects_idx!=subject],drop=False))
+
+    # Get the backward estimates for this fold.
+    model_loo = hsmm(stacked_loo, sf=sfreq, bump_width=bump_width,cpus=cpus)
+    fit = model_loo.backward_estimation(max_starting_points=max_starting_points)
+    return fit
+
+def loocv_mp(init, unstacked_data, bests, cpus=2, max_starting_points=1, verbose=True):
+    '''
+    Performs leave-one-out cross-validation distributed over multiple cores.
+
+    Parameters
+    ----------
+    init: hsmm
+        Instance of class hsmm
+    data : xarray
+        xarray data from transform_data()
+    bests : xarray | None
+        Either the backward estimate obtained from init via init.backward_estimation() or None.
+        In the latter case, backward estimates are obtained per fold in the LOOCV!
+    '''
     import multiprocessing
     import itertools
     participants = unstacked_data.participant.data
     likelihoods_loo = []
     loocv = []
+    bests_est = []
+    # Optionally calculate backwards estimates used as starting values on LOOCV heldout sets.
+    if bests is None:
+
+        for p in participants:
+            if verbose:
+                print(f'Estimating LOOCV backwards solutions for participant {p}')
+
+            best_est_p = __loocv_backwards(unstacked_data, p, init.sf, init.bump_width, cpus, max_starting_points)
+            bests_est.append(best_est_p)
+
+    # Perform LOOCV
     for n_bumps in np.arange(1, init.max_bumps+1):
         if verbose:
             print(f'LOOCV for model with {n_bumps} bump(s)')
+        
+        # Select starting parameters for current number of bumps
+        bests_n = None
+        if bests is None:
+            bests_n = [best_est_p.sel(n_bumps=n_bumps) for best_est_p in bests_est]
+        else:
+            bests_n = itertools.repeat(bests.sel(n_bumps=n_bumps))
+
         with multiprocessing.Pool(processes=cpus) as pool:
             loo = pool.starmap(LOOCV, 
                 zip(itertools.repeat(unstacked_data), participants, itertools.repeat(n_bumps), 
-                    itertools.repeat(bests.sel(n_bumps=n_bumps)), itertools.repeat(init.sf)))
+                    bests_n, itertools.repeat(init.sf)))
         loocv.append(loo)
 
     loocv = xr.DataArray(np.array(loocv)[:,:,0].astype(np.float64), coords={"n_bump":np.arange(1,init.max_bumps+1),
