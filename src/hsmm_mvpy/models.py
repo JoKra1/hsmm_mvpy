@@ -437,13 +437,21 @@ class hsmm:
                 temp[flat-1] = temp[flat-1] + temp[flat]
                 temp = np.delete(temp, flat)
                 flats_temp.append(np.reshape(np.concatenate([np.repeat(self.shape, len(temp)), temp]), (2, len(temp))).T)
+            bump_loo_likelihood_temp = []
             if self.cpus > 1:
                 with mp.Pool(processes=self.cpus) as pool:
                     bump_loo_likelihood_temp = pool.starmap(self.fit_single, 
                         zip(itertools.repeat(n_bumps), bumps_temp, flats_temp,
                             itertools.repeat(1),itertools.repeat(True),itertools.repeat(False)))
             else:
-                raise ValueError('For loop not yet written use cpus >1')
+                for bump_tmp, flat_tmp in zip(bumps_temp,flats_temp):
+                    bump_loo_likelihood_temp.append(self.fit_single(n_bumps,
+                                                                    bump_tmp,
+                                                                    flat_tmp,
+                                                                    1,
+                                                                    True, # mp should be False but with False it fails?
+                                                                    False))
+
             models = xr.concat(bump_loo_likelihood_temp, dim="iteration")
             bump_loo_results.append(models.sel(iteration=[np.where(models.likelihoods == models.likelihoods.max())[0][0]]).squeeze('iteration'))
             i+=1
