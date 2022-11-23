@@ -541,7 +541,7 @@ def LOOCV(data, subject, n_bumps, initial_fit, sfreq, bump_width=50):
     likelihood = model_left_out.calc_EEG_50h(fit.magnitudes, fit.parameters, n_bumps,True)
     return likelihood, subject
 
-def __loocv_backwards(data, subject, sfreq, bump_width=50, cpus=2, max_starting_points=1):
+def __loocv_backward(data, subject, sfreq, bump_width=50, cpus=2, max_starting_points=1):
     '''
     Calculates backward estimate on data excluding subject currently in the held-out set.
 
@@ -568,7 +568,7 @@ def __loocv_backwards(data, subject, sfreq, bump_width=50, cpus=2, max_starting_
     fit = model_loo.backward_estimation(max_starting_points=max_starting_points)
     return fit
 
-def loocv_mp(init, unstacked_data, bests, cpus=2, max_starting_points=1, verbose=True):
+def loocv_mp(init, unstacked_data, bests, cpus=2, max_starting_points=1, mp_backward_over_bumps=False, verbose=True):
     '''
     Performs leave-one-out cross-validation distributed over multiple cores.
 
@@ -588,15 +588,27 @@ def loocv_mp(init, unstacked_data, bests, cpus=2, max_starting_points=1, verbose
     likelihoods_loo = []
     loocv = []
     bests_est = []
+    
     # Optionally calculate backwards estimates used as starting values on LOOCV heldout sets.
     if bests is None:
 
-        for p in participants:
-            if verbose:
-                print(f'Estimating LOOCV backwards solutions for participant {p}')
+        # Parallelize over bumps - for each subject estimate backward solution in parallel.
+        if mp_backward_over_bumps:
+            for p in participants:
+                if verbose:
+                    print(f'Estimating LOOCV backwards solutions for participant {p}')
 
-            best_est_p = __loocv_backwards(unstacked_data, p, init.sf, init.bump_width, cpus, max_starting_points)
-            bests_est.append(best_est_p)
+                best_est_p = __loocv_backward(unstacked_data, p, init.sf, init.bump_width, cpus, max_starting_points)
+                bests_est.append(best_est_p)
+        
+        # Parallelize over subjects - estimate each bump solution sequentially for all subjects in parallel.
+        else:
+            with multiprocessing.Pool(processes=cpus) as pool:
+                bests_est = pool.starmap(__loocv_backward, 
+                    zip(itertools.repeat(unstacked_data), participants,
+                        itertools.repeat(init.sf), itertools.repeat(init.bump_width), 
+                        itertools.repeat(1), # Make sure that cpus is 1 for every call to __loocv_backwards()
+                        itertools.repeat(max_starting_points)))
 
     # Perform LOOCV
     for n_bumps in np.arange(1, init.max_bumps+1):
