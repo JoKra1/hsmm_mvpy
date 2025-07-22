@@ -196,15 +196,16 @@ def event_channels(
         .drop_duplicates("trial")
     )
 
-    n_events = estimated.event.count().values
-    n_trial = estimated.trial.count().values
-    n_channel = epoch_data.channel.count().values
-
     common_trial = np.intersect1d(
         estimated["trial"].values, epoch_data["trial"].values
     )
     epoch_data = epoch_data.sel(trial=common_trial)
     estimated = estimated.sel(trial=common_trial)
+
+    n_events = estimated.event.count().values
+    n_trial = estimated.trial.count().values
+    n_channel = epoch_data.channel.count().values
+
     if not peak:
         normed_template = template / np.sum(template)
 
