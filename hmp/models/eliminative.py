@@ -10,11 +10,6 @@ from hmp.models.base import BaseModel
 from hmp.models.event import EventModel
 from hmp.trialdata import TrialData
 
-try:
-    __IPYTHON__
-except NameError:
-    pass
-
 default_colors = ["cornflowerblue", "indianred", "orange", "darkblue", "darkgreen", "gold", "brown"]
 
 
