@@ -63,7 +63,7 @@ packages = ["hmp"]
 obsoletes = ["hsmm_mvpy"]
 
 [tool.setuptools_scm]
-write_to = "hmp/_version.py"
+version_file = "hmp/_version.py"
 
 
 [tool.ruff]
