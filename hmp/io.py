@@ -429,7 +429,7 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
     epochs.metadata.rename({"response": "rt"}, axis=1, inplace=True)
     return epochs
 
-def _epoch_selection(epochs,
+def _epoch_selection(epochs,  # noqa: PLR0912, PLR0913
                     metadata,
                     pfiles,
                     participant,
@@ -514,15 +514,16 @@ def _epoch_selection(epochs,
         )
     return epoch_data
 
-def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lower_limit_rt,
+def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lower_limit_rt,  # noqa: PLR0913
                upper_limit_rt, epochs, reject_threshold, valid_epoch_index, verbose):  # noqa: PLR0913
     """
-    Crop each epoch in the data to the reaction time (RT) window and apply optional rejection criteria.
+    Crop each epoch to the reaction time (RT) window and apply optional rejection criteria.
 
-    For each valid epoch, this function trims the epoch data from stimulus onset up to the reaction time,
-    optionally including a fixed offset after the response. Epochs with RTs outside the specified lower and upper
-    limits are rejected, and additional rejection can be applied based on signal amplitude thresholds between 
-    stimulus onset and response.
+    For each valid epoch, this function trims the epoch data from stimulus onset up to the reaction
+    time, optionally including a fixed offset after the response.
+    Epochs with RTs outside the specified lower and upper limits are rejected,
+    and additional rejection can be applied based on signal amplitude
+    thresholds between stimulus onset and response.
 
     Parameters
     ----------

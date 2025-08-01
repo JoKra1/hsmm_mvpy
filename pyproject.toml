@@ -67,7 +67,7 @@ version_file = "hmp/_version.py"
 
 
 [tool.ruff]
-exclude = ["_version.py", "experimental.py"]
+exclude = ["_version.py", "experimental.py", "loocv.py"]
 line-length = 100
 lint.select = ["E", "F", "W", "I", "N", "D", "PL", "ARG"]
 lint.ignore = ["PLR2004", "D107", "D105", "D102"]
