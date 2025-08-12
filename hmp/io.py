@@ -173,7 +173,6 @@ def read_mne_data(  # noqa: PLR0913  # This should probably be refactored instea
         if data_format == 'epochs':
             epochs = _read_mne_epochs(participant,
                     sfreq,
-                    metadata,
                     high_pass,
                     low_pass,
                     pick_channels,
@@ -482,23 +481,22 @@ def _epoch_selection(epochs,  # noqa: PLR0912, PLR0913
     triggers = metadata_i.iloc[:, 0].values  # assumes first col is trigger
     offset_after_resp_samples = np.rint(offset_after_resp * sfreq).astype(int)
 
-    if not ignore_rt:
-        cropped_data_epoch, epochs_idx = _cut_at_rt(
-            data_epoch,
-            rts_arr,
-            triggers,
-            offset_after_resp_samples,
-            sfreq,
-            lower_limit_rt,
-            upper_limit_rt,
-            epochs,
-            reject_threshold,
-            valid_epoch_index,
-            verbose
-        )
-    else:
-        cropped_data_epoch = data_epoch
-        epochs_idx = valid_epoch_index
+    
+    cropped_data_epoch, epochs_idx = _cut_at_rt(
+        data_epoch,
+        rts_arr,
+        triggers,
+        offset_after_resp_samples,
+        sfreq,
+        lower_limit_rt,
+        upper_limit_rt,
+        epochs,
+        reject_threshold,
+        valid_epoch_index,
+        ignore_rt,
+        verbose
+    )
+    
     print(f"{len(cropped_data_epoch)} trials were retained for participant {participant}")
     if verbose:
         print(f"End sampling frequency is {sfreq} Hz")
@@ -515,7 +513,7 @@ def _epoch_selection(epochs,  # noqa: PLR0912, PLR0913
     return epoch_data
 
 def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lower_limit_rt,  # noqa: PLR0913
-               upper_limit_rt, epochs, reject_threshold, valid_epoch_index, verbose):  # noqa: PLR0913
+               upper_limit_rt, epochs, reject_threshold, valid_epoch_index, ignore_rt, verbose):  # noqa: PLR0913
     """
     Crop each epoch to the reaction time (RT) window and apply optional rejection criteria.
 
@@ -547,6 +545,8 @@ def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lowe
         Maximum allowed signal amplitude for an epoch; epochs exceeding this are rejected.
     valid_epoch_index : array-like
         Indices of epochs that passed previous selection criteria.
+    ignore_rt: bool
+        If True, do not use RT to trin the data
     verbose : bool
         If True, print detailed processing steps.
 
@@ -562,7 +562,10 @@ def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lowe
 
     if upper_limit_rt < 0 or lower_limit_rt < 0:
         raise ValueError("Limit to RTs cannot be negative")
-    rts_arr = np.array(rts)
+    if ignore_rt:
+        rts_arr = np.repeat(upper_limit_rt, len(rts))
+    else:
+        rts_arr = np.array(rts)
     if verbose:
         print(
             f"Applying reaction time trim to keep RTs between {lower_limit_rt} and "
