@@ -481,7 +481,7 @@ def _epoch_selection(epochs,  # noqa: PLR0912, PLR0913
     triggers = metadata_i.iloc[:, 0].values  # assumes first col is trigger
     offset_after_resp_samples = np.rint(offset_after_resp * sfreq).astype(int)
 
-    
+
     cropped_data_epoch, epochs_idx = _cut_at_rt(
         data_epoch,
         rts_arr,
@@ -496,7 +496,7 @@ def _epoch_selection(epochs,  # noqa: PLR0912, PLR0913
         ignore_rt,
         verbose
     )
-    
+
     print(f"{len(cropped_data_epoch)} trials were retained for participant {participant}")
     if verbose:
         print(f"End sampling frequency is {sfreq} Hz")
@@ -512,8 +512,8 @@ def _epoch_selection(epochs,  # noqa: PLR0912, PLR0913
         )
     return epoch_data
 
-def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lower_limit_rt,  # noqa: PLR0913
-               upper_limit_rt, epochs, reject_threshold, valid_epoch_index, ignore_rt, verbose):  # noqa: PLR0913
+def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lower_limit_rt,  # noqa: PLR0913, PLR0912
+               upper_limit_rt, epochs, reject_threshold, valid_epoch_index, ignore_rt, verbose):  # noqa: PLR0913, PLR0912
     """
     Crop each epoch to the reaction time (RT) window and apply optional rejection criteria.
 
@@ -546,7 +546,7 @@ def _cut_at_rt(data_epoch, rts, triggers, offset_after_resp_samples, sfreq, lowe
     valid_epoch_index : array-like
         Indices of epochs that passed previous selection criteria.
     ignore_rt: bool
-        If True, do not use RT to trin the data
+        If True, do not use RT to trim the data
     verbose : bool
         If True, print detailed processing steps.
 
