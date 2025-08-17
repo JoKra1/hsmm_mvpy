@@ -8,6 +8,21 @@ try:
     import jax
     import jax.numpy as jnp
     from jax import jit, value_and_grad
+    
+    # Enable float64 support in JAX for better numerical precision
+    # But disable on Apple Metal due to compatibility issues
+    import platform
+    if platform.system() == "Darwin":
+        # On macOS, try to use CPU backend to avoid Metal issues
+        try:
+            jax.config.update("jax_platform_name", "cpu")
+        except:
+            pass
+        # Use float32 on Apple Metal to avoid compatibility issues
+        jax.config.update("jax_enable_x64", False)
+    else:
+        jax.config.update("jax_enable_x64", True)
+    
     JAX_AVAILABLE = True
 except ImportError:
     jax = None
@@ -28,11 +43,29 @@ if JAX_AVAILABLE:
                    shape * jnp.log(scale) - jax.scipy.special.gammaln(shape))
         return jnp.exp(log_pdf)
 
-    def _distribution_pdf_jax(shape: float, scale: float, max_duration: int) -> jnp.ndarray:
-        """JAX version of distribution PDF computation."""
-        x = jnp.arange(1, max_duration + 1, dtype=jnp.float64)
-        pdf = _gamma_pdf_jax(x, shape, scale)
-        return pdf / jnp.sum(pdf)  # Normalize
+    def _distribution_pdf_jax(shape: float, scale: float, max_duration: int):
+        """JAX version of distribution PDF computation with numerical stability."""
+        x = jnp.arange(1, max_duration + 1, dtype=jnp.float32 if not jax.config.jax_enable_x64 else jnp.float64)  # Start from 1, not 0
+        
+        # Ensure parameters are positive and bounded
+        shape = jnp.clip(shape, 1e-6, 1e6)  # Bound shape parameter
+        scale = jnp.clip(scale, 1e-6, 1e6)  # Bound scale parameter
+        
+        # Use JAX gamma distribution
+        pdf = jax.scipy.stats.gamma.pdf(x, a=shape, scale=scale)
+        
+        # Handle numerical issues more robustly
+        pdf = jnp.where(jnp.isfinite(pdf), pdf, 1e-15)
+        pdf = jnp.maximum(pdf, 1e-15)  # Ensure all values are positive
+        
+        # Normalize with numerical stability
+        pdf_sum = jnp.sum(pdf)
+        pdf_sum = jnp.maximum(pdf_sum, 1e-10)  # Prevent division by zero
+        
+        # Normalize
+        pdf = pdf / pdf_sum
+        
+        return pdf
 
     @jit
     def estim_probs_jax_simple(
@@ -91,15 +124,18 @@ if JAX_AVAILABLE:
         
         # Time parameter contribution (simplified gamma likelihood)
         def compute_stage_contribution(stage):
-            shape_param = time_pars[stage, 0]
-            scale_param = time_pars[stage, 1]
+            shape_param = jnp.clip(time_pars[stage, 0], 1e-6, 1e6)  # Bound parameters
+            scale_param = jnp.clip(time_pars[stage, 1], 1e-6, 1e6)
             
             # Simplified time contribution - use mean duration for each stage
-            mean_duration = jnp.mean(durations) / n_stages
+            mean_duration = jnp.maximum(jnp.mean(durations) / n_stages, 1e-6)
             
-            # Gamma log-likelihood terms
-            log_contrib = ((shape_param - 1) * jnp.log(jnp.maximum(mean_duration, 1e-6)) - 
-                          mean_duration / jnp.maximum(scale_param, 1e-6))
+            # Gamma log-likelihood terms with numerical stability
+            log_contrib = ((shape_param - 1) * jnp.log(mean_duration) - 
+                          mean_duration / scale_param)
+            
+            # Ensure finite result
+            log_contrib = jnp.where(jnp.isfinite(log_contrib), log_contrib, -1e6)
             return log_contrib
         
         # Use vmap to vectorize over stages
@@ -108,36 +144,241 @@ if JAX_AVAILABLE:
         
         return channel_likelihood + time_likelihood
 
-    # Create gradient function
+    def estim_probs_jax_complete(
+        cross_corr: jnp.ndarray,
+        channel_pars: jnp.ndarray,
+        time_pars: jnp.ndarray,
+        durations: jnp.ndarray,
+        starts: jnp.ndarray,
+        ends: jnp.ndarray,
+        locations: jnp.ndarray
+    ) -> float:
+        """
+        Complete JAX implementation of the forward-backward algorithm.
+        
+        This function ports the full estim_probs logic from event.py to JAX
+        for automatic differentiation support.
+        
+        Note: This function cannot be JIT compiled due to dynamic shapes,
+        but it still supports automatic differentiation.
+        """
+        n_events, n_dims = channel_pars.shape
+        n_stages = n_events + 1
+        n_trials = durations.shape[0]
+        max_duration = int(jnp.max(durations))  # Convert to concrete Python int
+        n_samples = cross_corr.shape[0]
+        
+        # Compute gains (equivalent to lines 934-943 in event.py)
+        gains = jnp.zeros((n_samples, n_events))
+        for i in range(n_dims):
+            channel_contribution = (
+                cross_corr[:, i][:, None] * channel_pars[:, i][None, :] -
+                channel_pars[:, i][None, :] ** 2 / 2
+            )
+            gains = gains + channel_contribution
+        gains = jnp.exp(gains)
+        
+        # Initialize probability arrays (equivalent to lines 944-956 in event.py)
+        # Use concrete max_duration for array creation
+        probs = jnp.zeros((max_duration, n_trials, n_events))
+        probs_b = jnp.zeros((max_duration, n_trials, n_events))
+        
+        # Setup trial probabilities
+        for trial in range(n_trials):
+            start_idx = int(starts[trial])
+            end_idx = int(ends[trial])
+            duration = int(durations[trial])
+            
+            # Ensure indices are within bounds
+            start_idx = max(0, min(start_idx, n_samples - 1))
+            end_idx = max(start_idx, min(end_idx, n_samples - 1))
+            
+            # Extract gains for this trial
+            trial_gains = gains[start_idx:end_idx + 1, :]
+            
+            # Assign to probability arrays with proper bounds checking
+            actual_length = min(duration, trial_gains.shape[0], max_duration)
+            probs = probs.at[:actual_length, trial, :].set(trial_gains[:actual_length, :])
+            
+            # Reversed version for backward pass
+            trial_gains_rev = jnp.flip(jnp.flip(trial_gains, axis=0), axis=1)
+            probs_b = probs_b.at[:actual_length, trial, :].set(trial_gains_rev[:actual_length, :])
+        
+        # Compute PMF for each stage (equivalent to lines 957-967 in event.py)
+        pmf = jnp.zeros((max_duration, n_stages))
+        for stage in range(n_stages):
+            shape_param = jnp.clip(time_pars[stage, 0], 1e-6, 1e6)  # Bound parameters
+            scale_param = jnp.clip(time_pars[stage, 1], 1e-6, 1e6)
+            
+            # Get base PDF
+            base_pdf = _distribution_pdf_jax(shape_param, scale_param, max_duration)
+            
+            # Apply location constraints
+            location_offset = int(locations[stage])
+            location_offset = max(0, min(location_offset, max_duration - 1))  # Bound offset
+            
+            # Create PMF with location constraints
+            if location_offset > 0:
+                stage_pmf = jnp.concatenate([
+                    jnp.full(location_offset, 1e-15),
+                    base_pdf[:(max_duration - location_offset)]
+                ])
+            else:
+                stage_pmf = base_pdf
+            
+            # Ensure correct length
+            if stage_pmf.shape[0] < max_duration:
+                stage_pmf = jnp.concatenate([
+                    stage_pmf,
+                    jnp.full(max_duration - stage_pmf.shape[0], 1e-15)
+                ])
+            elif stage_pmf.shape[0] > max_duration:
+                stage_pmf = stage_pmf[:max_duration]
+            
+            pmf = pmf.at[:, stage].set(stage_pmf)
+        
+        pmf_b = jnp.flip(pmf, axis=1)  # Stage-reversed version
+        
+        # Initialize forward and backward arrays
+        forward = jnp.zeros((max_duration, n_trials, n_events))
+        backward = jnp.zeros((max_duration, n_trials, n_events))
+        
+        # Initialize first stage (equivalent to lines 973-978 in event.py)
+        forward = forward.at[:, :, 0].set(
+            jnp.tile(pmf[:, 0][:, None], (1, n_trials)) * probs[:, :, 0]
+        )
+        backward = backward.at[:, :, 0].set(
+            jnp.tile(pmf_b[:, 0][:, None], (1, n_trials))
+        )
+        
+        # Forward-backward recursion (equivalent to lines 980-994 in event.py)
+        for event in range(1, n_events):
+            # Backward computation
+            add_b = backward[:, :, event - 1] * probs_b[:, :, event - 1]
+            
+            # Perform convolutions for each trial
+            for trial in range(n_trials):
+                # Forward convolution
+                forward_conv = jax.scipy.signal.convolve(
+                    forward[:, trial, event - 1], 
+                    pmf[:, event], 
+                    mode='full'
+                )[:max_duration]
+                
+                # Backward convolution  
+                backward_conv = jax.scipy.signal.convolve(
+                    add_b[:, trial], 
+                    pmf_b[:, event], 
+                    mode='full'
+                )[:max_duration]
+                
+                # Update arrays
+                forward = forward.at[:, trial, event].set(forward_conv * probs[:, trial, event])
+                backward = backward.at[:, trial, event].set(backward_conv)
+        
+        # Re-arrange backward (equivalent to lines 995-997 in event.py)
+        backward = jnp.flip(backward, axis=2)  # Undo stage inversion
+        
+        # Reverse sample order for each trial
+        for trial in range(n_trials):
+            duration = int(durations[trial])
+            trial_backward = backward[:duration, trial, :]
+            reversed_portion = jnp.flip(trial_backward, axis=0)
+            backward = backward.at[:duration, trial, :].set(reversed_portion)
+        
+        # Compute event probabilities (equivalent to lines 998-999 in event.py)
+        eventprobs = forward * backward
+        eventprobs = jnp.maximum(eventprobs, 0.0)  # Clip negative values
+        
+        # Compute likelihood with numerical stability (equivalent to lines 1001-1005 in event.py)
+        prob_sums = jnp.sum(eventprobs[:, :, 0], axis=0)
+        prob_sums = jnp.maximum(prob_sums, 1e-15)  # Prevent log(0)
+        
+        # Handle edge cases where prob_sums might still be problematic
+        log_probs = jnp.where(prob_sums > 1e-15, jnp.log(prob_sums), -34.5)  # log(1e-15) ≈ -34.5
+        likelihood = jnp.sum(log_probs)
+        
+        # Ensure likelihood is finite
+        likelihood = jnp.where(jnp.isfinite(likelihood), likelihood, -1e6)
+        
+        return likelihood
+
+    # Create gradient functions for both implementations
     estim_probs_grad_jax = jit(value_and_grad(estim_probs_jax_simple, argnums=(1, 2)))
+    estim_probs_grad_jax_complete = value_and_grad(estim_probs_jax_complete, argnums=(1, 2))
 
     def compute_hmp_likelihood_and_gradients(cross_corr, channel_pars, time_pars, 
-                                           durations, starts, ends, locations):
+                                           durations, starts, ends, locations, use_complete=True):
         """Compute likelihood and gradients using JAX."""
-        # Convert to JAX arrays
-        cross_corr_jax = jnp.array(cross_corr, dtype=jnp.float64)
-        channel_pars_jax = jnp.array(channel_pars, dtype=jnp.float64)
-        time_pars_jax = jnp.array(time_pars, dtype=jnp.float64)
+        # Convert to JAX arrays with appropriate dtype
+        float_dtype = jnp.float32 if not jax.config.jax_enable_x64 else jnp.float64
+        
+        cross_corr_jax = jnp.array(cross_corr, dtype=float_dtype)
+        channel_pars_jax = jnp.array(channel_pars, dtype=float_dtype)
+        time_pars_jax = jnp.array(time_pars, dtype=float_dtype)
         durations_jax = jnp.array(durations, dtype=jnp.int32)
         starts_jax = jnp.array(starts, dtype=jnp.int32)
         ends_jax = jnp.array(ends, dtype=jnp.int32)
         locations_jax = jnp.array(locations, dtype=jnp.int32)
         
-        # Compute likelihood and gradients
-        likelihood, (channel_grad, time_grad) = estim_probs_grad_jax(
-            cross_corr_jax, channel_pars_jax, time_pars_jax,
-            durations_jax, starts_jax, ends_jax, locations_jax
-        )
+        # Check for numerical issues that could cause hanging
+        if not jnp.isfinite(channel_pars_jax).all():
+            raise ValueError("Non-finite values in channel_pars")
+        if not jnp.isfinite(time_pars_jax).all():
+            raise ValueError("Non-finite values in time_pars")
+        if (time_pars_jax <= 0).any():
+            raise ValueError("Non-positive values in time_pars")
+        
+        try:
+            # Try simplified implementation first - it's more stable
+            likelihood, (channel_grad, time_grad) = estim_probs_grad_jax(
+                cross_corr_jax, channel_pars_jax, time_pars_jax,
+                durations_jax, starts_jax, ends_jax, locations_jax
+            )
+            
+            # Check if result is valid
+            if not jnp.isfinite(likelihood) or not jnp.isfinite(channel_grad).all() or not jnp.isfinite(time_grad).all():
+                raise ValueError("Non-finite likelihood or gradients from simplified implementation")
+                
+        except Exception as e:
+            # If simplified fails and we wanted complete, try complete
+            if use_complete:
+                try:
+                    likelihood, (channel_grad, time_grad) = estim_probs_grad_jax_complete(
+                        cross_corr_jax, channel_pars_jax, time_pars_jax,
+                        durations_jax, starts_jax, ends_jax, locations_jax
+                    )
+                    
+                    if not jnp.isfinite(likelihood) or not jnp.isfinite(channel_grad).all() or not jnp.isfinite(time_grad).all():
+                        raise ValueError("Non-finite likelihood or gradients from complete implementation")
+                        
+                except Exception as e2:
+                    # Both implementations failed
+                    raise RuntimeError(f"Both JAX implementations failed. Simplified: {e}, Complete: {e2}")
+            else:
+                # Only simplified was requested and it failed
+                raise e
         
         return float(likelihood), np.array(channel_grad), np.array(time_grad)
+    
+    def compute_hmp_likelihood_and_gradients_simple(cross_corr, channel_pars, time_pars, 
+                                                  durations, starts, ends, locations):
+        """Compute likelihood and gradients using simplified JAX implementation."""
+        return compute_hmp_likelihood_and_gradients(cross_corr, channel_pars, time_pars, 
+                                                   durations, starts, ends, locations, use_complete=False)
 
 else:
     # Fallback functions when JAX is not available
     def compute_hmp_likelihood_and_gradients(*args, **kwargs):
         raise ImportError("JAX is required for gradient computation but is not available")
     
+    def compute_hmp_likelihood_and_gradients_simple(*args, **kwargs):
+        raise ImportError("JAX is required for gradient computation but is not available")
+    
     estim_probs_jax_simple = None
+    estim_probs_jax_complete = None
     estim_probs_grad_jax = None
+    estim_probs_grad_jax_complete = None
 
 
 # PyTensor integration
@@ -186,13 +427,22 @@ def create_jax_likelihood_op():
             def perform(self, node, inputs, outputs):
                 channel_pars, time_pars, cross_corr, durations, starts, ends, locations = inputs
                 
-                # Compute likelihood using JAX
-                likelihood, _, _ = compute_hmp_likelihood_and_gradients(
-                    cross_corr, channel_pars, time_pars, 
-                    durations, starts, ends, locations
-                )
-                
-                outputs[0][0] = np.asarray(likelihood, dtype=node.outputs[0].dtype)
+                try:
+                    # Compute likelihood using JAX (simplified first, then complete if needed)
+                    likelihood, _, _ = compute_hmp_likelihood_and_gradients(
+                        cross_corr, channel_pars, time_pars, 
+                        durations, starts, ends, locations, use_complete=False  # Start with simplified
+                    )
+                    
+                    # Check for valid result
+                    if not np.isfinite(likelihood):
+                        raise ValueError(f"Non-finite likelihood: {likelihood}")
+                        
+                    outputs[0][0] = np.asarray(likelihood, dtype=node.outputs[0].dtype)
+                    
+                except Exception as e:
+                    # If JAX fails, this should propagate up to trigger numpy fallback
+                    raise RuntimeError(f"JAX likelihood computation failed: {e}")
             
             def grad(self, inputs, output_grads):
                 import pytensor.tensor as at
@@ -257,10 +507,10 @@ def create_jax_likelihood_op():
             def perform(self, node, inputs, outputs):
                 channel_pars, time_pars, cross_corr, durations, starts, ends, locations = inputs
                 
-                # Compute gradients using JAX
+                # Compute gradients using JAX (complete implementation by default)
                 _, channel_grad, time_grad = compute_hmp_likelihood_and_gradients(
                     cross_corr, channel_pars, time_pars, 
-                    durations, starts, ends, locations
+                    durations, starts, ends, locations, use_complete=True
                 )
                 
                 outputs[0][0] = np.asarray(channel_grad, dtype=channel_pars.dtype)

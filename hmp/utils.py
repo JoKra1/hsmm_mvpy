@@ -1,13 +1,10 @@
 """Functions to transform the input data and the estimates."""
 
-from warnings import filterwarnings, warn
+from warnings import warn
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 from pandas import MultiIndex
-
-from hmp import mcca
 
 
 def stack_data(data):
@@ -38,7 +35,7 @@ def stack_data(data):
     return data
 
 
-def event_times(
+def event_times(  # noqa: PLR0912
     estimates,
     duration=False,
     mean=False,
@@ -85,7 +82,7 @@ def event_times(
     """
     assert not (mean and errorbars is not None), "Only one of mean and errorbars can be set."
     tstep = 1000 / estimates.sfreq if as_time else 1
-    
+
     if estimate_method is None:
         estimate_method = "max"
     event_shift = 0
@@ -100,7 +97,7 @@ def event_times(
     )  # take average to make sure it's not just 0 on the trial-group
     for c, e in np.argwhere(times_group == -event_shift):
         times[times["group"] == c, e] = np.nan
-    
+
     if add_rt:
         rts = estimates.cumsum('sample').argmax('sample').max('event')+1
         if remove_offset:
@@ -110,7 +107,7 @@ def event_times(
         rts = rts.expand_dims(dim="event")
         times = xr.concat([times, rts], dim="event")
 
-    times = times * tstep     
+    times = times * tstep
     if duration:  # taking into account missing events, hence the ugly code
         added = xr.DataArray(
             np.repeat(0, len(times.trial))[np.newaxis, :],
@@ -199,20 +196,21 @@ def event_channels(
         .drop_duplicates("trial")
     )
 
-    n_events = estimated.event.count().values
-    n_trial = estimated.trial.count().values
-    n_channel = epoch_data.channel.count().values
-
     common_trial = np.intersect1d(
         estimated["trial"].values, epoch_data["trial"].values
     )
     epoch_data = epoch_data.sel(trial=common_trial)
     estimated = estimated.sel(trial=common_trial)
+
+    n_events = estimated.event.count().values
+    n_trial = estimated.trial.count().values
+    n_channel = epoch_data.channel.count().values
+
     if not peak:
         normed_template = template / np.sum(template)
 
     times = event_times(estimated, mean=False, estimate_method=estimate_method,)
-    
+
     event_values = np.zeros((n_channel, n_trial, n_events))*np.nan
     for ev in range(n_events):
         for tr in range(n_trial):
@@ -248,7 +246,7 @@ def event_channels(
     return event_values
 
 
-def centered_activity(
+def centered_activity(  # noqa  # Might need some refactoring.
     data,
     times,
     channel,

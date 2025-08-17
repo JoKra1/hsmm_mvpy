@@ -348,13 +348,43 @@ class MCMCEstimator(BaseEstimator):
     def _log_likelihood_func(self, trial_data, model, channel_pars, time_pars):
         """
         Returns a log-likelihood function for PyMC model.
-        This function computes the HMP log-likelihood using the JAX-based forward-backward algorithm.
+        This function computes the HMP log-likelihood using either JAX-based 
+        forward-backward algorithm (if available) or numpy fallback.
         """
-        if not JAX_OP_AVAILABLE:
-            raise ImportError(
-                "JAX is required for MCMC estimation. Install with: pip install 'hmp[mcmc]'"
-            )
-        return self._log_likelihood_func_jax(trial_data, model, channel_pars, time_pars)
+        # Check if we should use JAX implementation
+        use_jax = (
+            self.use_gradients and 
+            JAX_OP_AVAILABLE and 
+            self._should_use_jax(trial_data)
+        )
+        
+        if use_jax:
+            try:
+                result = self._log_likelihood_func_jax(trial_data, model, channel_pars, time_pars)
+                if self._verbose:
+                    print("Using JAX implementation with automatic gradients")
+                return result
+            except Exception as e:
+                if self._verbose:
+                    print(f"JAX implementation failed ({e}), falling back to numpy implementation")
+                # Mark gradients as unavailable for this session
+                self._gradients_available = False
+                return self._log_likelihood_func_numpy(trial_data, model, channel_pars, time_pars)
+        else:
+            # Use numpy implementation
+            if hasattr(self, '_verbose') and self._verbose:
+                if not JAX_OP_AVAILABLE:
+                    reason = "JAX not available"
+                else:
+                    reason = "using fallback"
+                print(f"Using numpy implementation ({reason})")
+            self._gradients_available = False
+            return self._log_likelihood_func_numpy(trial_data, model, channel_pars, time_pars)
+            
+    def _should_use_jax(self, trial_data):
+        """Determine if JAX should be used based on data characteristics."""
+        # Always try JAX first - let the exception handling deal with failures
+        return True
     
     def _log_likelihood_func_jax(self, trial_data, model, channel_pars, time_pars):
         """JAX-based log-likelihood function with automatic differentiation."""
@@ -395,6 +425,63 @@ class MCMCEstimator(BaseEstimator):
         
         # Mark gradients as available
         self._gradients_available = True
+        
+        return likelihood_result
+    
+    def _log_likelihood_func_numpy(self, trial_data, model, channel_pars, time_pars):
+        """NumPy-based log-likelihood function (fallback when JAX is not available)."""
+        import pytensor.tensor as at
+        
+        # Create a PyTensor Op that uses the original numpy implementation
+        class NumpyHMPLikelihoodOp(at.Op):
+            __props__ = ()
+            
+            def make_node(self, channel_pars, time_pars, cross_corr, durations, starts, ends, locations):
+                # Convert inputs to PyTensor tensors
+                channel_pars = at.as_tensor_variable(channel_pars)
+                time_pars = at.as_tensor_variable(time_pars) 
+                cross_corr = at.as_tensor_variable(cross_corr)
+                durations = at.as_tensor_variable(durations)
+                starts = at.as_tensor_variable(starts)
+                ends = at.as_tensor_variable(ends)
+                locations = at.as_tensor_variable(locations)
+                
+                inputs = [channel_pars, time_pars, cross_corr, durations, starts, ends, locations]
+                outputs = [at.dscalar()]
+                return at.Apply(self, inputs, outputs)
+            
+            def perform(self, node, inputs, outputs):
+                channel_pars, time_pars, cross_corr, durations, starts, ends, locations = inputs
+                
+                # Use the original numpy implementation from the model
+                likelihood, _ = model.estim_probs(
+                    trial_data, channel_pars, time_pars, location=True
+                )
+                
+                outputs[0][0] = np.asarray(likelihood, dtype=node.outputs[0].dtype)
+        
+        numpy_op = NumpyHMPLikelihoodOp()
+        
+        # Prepare static data (all as numpy arrays)
+        cross_corr = trial_data.cross_corr
+        durations = trial_data.durations if hasattr(trial_data.durations, 'values') else trial_data.durations
+        if hasattr(durations, 'values'):
+            durations = durations.values
+        starts = trial_data.starts  
+        ends = trial_data.ends
+        
+        # Get the shape of time_pars to create locations
+        # Since time_pars is a PyTensor variable, we need to get its shape another way
+        n_stages = model.n_events + 1  # This should be the number of stages
+        locations = np.zeros(n_stages, dtype=int)  # Default locations
+        
+        # Create the PyTensor computation graph
+        likelihood_result = numpy_op.make_node(
+            channel_pars, time_pars, cross_corr, durations, starts, ends, locations
+        ).outputs[0]
+        
+        # Mark that gradients are not available with numpy fallback
+        self._gradients_available = False
         
         return likelihood_result
     

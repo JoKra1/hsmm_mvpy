@@ -2,18 +2,19 @@
 
 from itertools import cycle
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.signal as ssignal
 import xarray as xr
-from scipy import stats
 from mne import Info
-from hmp.utils import event_times, event_channels
+from mne.viz import plot_brain_colorbar, plot_topomap
+from scipy import stats
+
+from hmp.utils import event_channels, event_times
 
 default_colors = ["cornflowerblue", "indianred", "orange", "darkblue", "darkgreen", "gold"]
 
-def plot_topo_timecourse(
+def plot_topo_timecourse(  # noqa  # Might need some serious refactoring.
     epoch_data: xr.DataArray,
     estimates: xr.DataArray,
     channel_position: np.ndarray,
@@ -35,9 +36,9 @@ def plot_topo_timecourse(
     colorbar: bool = True,
     topo_size_scaling: bool = False,
     as_time: bool = False,
-    linecolors: str = "black",
     estimate_method: str = None,
-    combined: bool = False
+    combined: bool = False,
+    group_plot: bool = False,
 ) -> plt.Axes:
     """
     Plot the event topographies at the average time of the onset of the next stage.
@@ -71,9 +72,11 @@ def plot_topo_timecourse(
     max_time : float, optional
         Limit of the x (time) axis.
     vmin : float, optional
-        Minimum value for the colormap. If not explicitly set, uses the minimum across all topographies.
+        Minimum value for the colormap. If not explicitly set, uses the minimum across
+        all topographies.
     vmax : float, optional
-        Maximum value for the colormap. If not explicitly set, uses the maximum across all topographies.
+        Maximum value for the colormap. If not explicitly set, uses the maximum across
+        all topographies.
     title : str | bool, optional
         Title of the plot. If False, no title is displayed.
     ax : plt.Axes, optional
@@ -93,23 +96,22 @@ def plot_topo_timecourse(
         the size of topographies depends on the total plotted time interval. If False,
         it is only dependent on `magnify`.
     as_time : bool, optional
-        If True, plot time in milliseconds instead of samples. Ignored if times are provided as an array.
+        If True, plot time in milliseconds instead of samples. Ignored if times are provided as an
+        array.
     linecolors : str, optional
         Color of the lines in the plot.
     estimate_method : str, optional
         'max' or 'mean'. Either take the max probability of each event on each trial,
         or the weighted average.
     combined : bool, optional
-        Whether to combine groups by averaging across them (True) or plot each group (False, default).
+        Whether to combine groups by averaging across them (True) or plot each group
+        (False, default).
 
     Returns
     -------
     plt.Axes
         The matplotlib Axes object containing the plot.
     """
-
-    from mne import Info
-    from mne.viz import plot_brain_colorbar, plot_topomap
     # if estimates is an fitted HMP instance, calculate topos and times
     assert "event" in estimates.dims
     sfreq = epoch_data.sfreq
@@ -139,7 +141,7 @@ def plot_topo_timecourse(
     else:
         event_color = event_lines
 
-    # extract relevant info from estimates to pot 
+    # extract relevant info from estimates to pot
     channel_data = event_channels(
         epoch_data, estimates,
         estimate_method=estimate_method
@@ -161,7 +163,7 @@ def plot_topo_timecourse(
     # reverse order, to make correspond to group maps
     channel_data = np.flip(channel_data, axis=1)
     times =  np.flip(times, axis=0)
-    
+
     # Time/sample
     if as_time:
         time_step = 1000 / sfreq  # time_step still needed below
@@ -170,7 +172,7 @@ def plot_topo_timecourse(
     event_size = estimates.event_width_samples * time_step
 
     # fix vmin/vmax across topos, while keeping symmetric
-    if vmax == None:  # vmax = absolute max, unless no positive values
+    if vmax is None:  # vmax = absolute max, unless no positive values
         vmax = np.nanmax(np.abs(channel_data[:]))
         vmin = -vmax if np.nanmin(channel_data[:]) < 0 else 0
         if np.nanmax(channel_data[:]) < 0:
@@ -183,7 +185,7 @@ def plot_topo_timecourse(
         times_to_display = times
     if len(times_to_display.shape) == 1:
         times_to_display = [times_to_display] * n_group
-    
+
     # based the size of the topographies on event_size and magnify or only on magnify
     if topo_size_scaling:  # does topo width scale with time interval of plot?
         topo_size = event_size * magnify
@@ -197,11 +199,12 @@ def plot_topo_timecourse(
     if ylabels == []:
         ylabels = np.arange(n_group)#estimates.glabels
     return_ax = True
-    
+
     # make axis
     if ax is None:
         if figsize is None:
-            figsize = (12, n_group * 0.7* np.max([magnify, 1.8]))  # make sure they don't get too flat
+            # make sure they don't get too flat
+            figsize = (12, n_group * 0.7* np.max([magnify, 1.8]))
         _, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
         return_ax = False
 
@@ -241,7 +244,7 @@ def plot_topo_timecourse(
                     sensors=sensors,
                     contours=contours,
                 )
-    
+
                 # lines/fill of detected event
                 if event_lines:
                     # bottom of row + 5% if n_group > 1
@@ -256,7 +259,7 @@ def plot_topo_timecourse(
                         if n_group == 1
                         else (group + 1) * rowheight - 0.05 * rowheight
                     )
-    
+
                     ax.vlines(
                         times_group[event] - event_size / 2,
                         ylow2,
@@ -356,14 +359,14 @@ def plot_topo_timecourse(
     if plt.get_backend()[0:2] == "Qt" or plt.get_backend() == "nbAgg":  # fixes issue with yscaling
         plt.gcf().subplots_adjust(top=0.85, bottom=0.2)  # tight layout didn't work anymore
     if return_ax:
-        
+
         ax.set_ylim(0, n_group)  # -1
         return ax
 
 
 def plot_components_sensor(
-    weights: xr.DataArray, 
-    positions: np.ndarray | Info, 
+    weights: xr.DataArray,
+    positions: np.ndarray | Info,
     cmap: str = "Spectral_r"
 ) -> None:
     """
@@ -380,9 +383,6 @@ def plot_components_sensor(
     cmap : str, optional
         Colormap to use for the topomap, by default "Spectral_r".
     """
-
-    from mne.viz import plot_topomap
-
     fig, ax = plt.subplots(1, len(weights.component))
     for comp in weights.component:
         plot_topomap(
@@ -394,7 +394,7 @@ def plot_components_sensor(
         )
 
 
-def plot_loocv(
+def plot_loocv(  # noqa # Refactor?
     loocv_estimates,
     pvals=True,
     test="t-test",
@@ -436,9 +436,9 @@ def plot_loocv(
     """
     if pvals:
         if test == "sign":
-            from statsmodels.stats.descriptivestats import sign_test
+            from statsmodels.stats.descriptivestats import sign_test  # noqa: PLC0415
         elif test == "t-test":
-            from scipy.stats import ttest_1samp
+            from scipy.stats import ttest_1samp  # noqa: PLC0415
         else:
             raise ValueError("Expected sign or t-test argument to test parameter")
     if ax is None:
@@ -534,7 +534,7 @@ def plot_loocv(
             return pvalues
 
 
-def plot_latencies(
+def plot_latencies(  # noqa  # Refactor?
     estimates,
     init=None,
     labels=[],

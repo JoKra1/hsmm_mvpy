@@ -1,5 +1,14 @@
 """Software for fitting HMP on EEG/MEG data."""
 
-from . import loocv, models, utils, visu, io, preprocessing, patterns, distributions, estimators
+from importlib.metadata import PackageNotFoundError, version
 
-__all__ = ["models", "simulations", "utils", "visu", "io", "preprocessing", "patterns", "distributions" ,"mcca", "loocv", "estimators"]
+from . import distributions, estimators, io, loocv, models, patterns, preprocessing, utils, visu
+
+try:
+    __version__ = version("hmp")
+except PackageNotFoundError:
+    __version__ = "unknown"
+
+
+__all__ = ["models", "simulations", "utils", "visu", "io", "preprocessing", "patterns",
+           "distributions" ,"mcca", "loocv", "estimators", "__version__"]

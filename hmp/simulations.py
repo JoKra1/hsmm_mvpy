@@ -4,24 +4,22 @@ import os
 import os.path as op
 from copy import deepcopy
 from warnings import warn
-from hmp.trialdata import TrialData
-from hmp.models.event import EventModel
-import xarray as xr
-
 
 import mne
 import numpy as np
+import xarray as xr
+from scipy.stats import gamma
+
+from hmp.io import read_mne_data
+from hmp.models.event import EventModel
+from hmp.trialdata import TrialData
+
 root = os.path.dirname(os.path.abspath(__file__))
 
 def available_sources():
     """List available sources for sample subject in MNE."""
     labels = np.load(op.join(root,'simulation_parameters','sources_list.npy'))
     return labels
-
-
-def sfreq():
-    """Recovering sampling frequency of the sample data."""
-    return info()["sfreq"]
 
 
 def positions():
@@ -50,7 +48,7 @@ def event_shape(event_width, event_width_samples, steps):
     )  # event morph based on a half sine with given event width and sampling frequency
     return template
 
-def simulate(
+def simulate(  # noqa  # Might need to be refactored.
     sources: list,
     n_trials: int,
     n_jobs: int,
@@ -112,11 +110,13 @@ def simulate(
     sfreq : float, optional
         Sampling frequency in Hz. Default is 100.0.
     save_snr : bool, optional
-        Whether to save the signal-to-noise ratio (SNR) at peak value and electrode noise. Default is False.
+        Whether to save the signal-to-noise ratio (SNR) at peak value and electrode noise.
+        Default is False.
     save_noiseless : bool, optional
         Whether to save the noiseless version of the simulated data. Default is False.
     event_length_samples : list, optional
-        List of event lengths in samples for each source (e.g. to simulate longer sinewaves). Default is None.
+        List of event lengths in samples for each source (e.g. to simulate longer sinewaves).
+        Default is None.
     proportions : list, optional
         List of proportions of trials with each source. Default is None.
 
@@ -125,7 +125,6 @@ def simulate(
     list
         A list of file names (file + number of subject) and associated metadata.
     """
-
     os.environ["SUBJECTS_DIR"] = op.join(root,'simulation_parameters')
     path = op.join(os.getcwd(), path)
     os.makedirs(path, exist_ok=True)
@@ -200,7 +199,7 @@ def simulate(
                 else:
                     trial_time_seq = np.sum(rand_times[seq_index], axis=0)
                     trial_time_nonseq = np.sum(rand_times[~seq_index], axis=0)
-                    
+
                     trial_time = np.maximum(trial_time_seq, trial_time_nonseq)
         else:
             trial_time = np.sum(times, axis=1)
@@ -237,10 +236,12 @@ def simulate(
 
             # Fake source, actually stimulus onset
             selected_label = mne.read_labels_from_annot(
-                '', regexp=sources_subj[0][0], subjects_dir=op.join(root,'simulation_parameters'), verbose=verbose
+                '', regexp=sources_subj[0][0], subjects_dir=op.join(root,'simulation_parameters'),
+                verbose=verbose
             )[0]
             label = mne.label.select_sources(
-                '', selected_label, subjects_dir=op.join(root,'simulation_parameters'), random_state=random_state
+                '', selected_label, subjects_dir=op.join(root,'simulation_parameters'),
+                random_state=random_state
             )
             source_time_series = np.array([1e-20])  # stim trigger
             source_simulator.add_data(label, source_time_series, events)
@@ -251,7 +252,8 @@ def simulate(
                 if trigger == len(sources_subj) + 1:
                     source[2] = 1e-20  # Last source defines RT and is not an event per se
                 selected_label = mne.read_labels_from_annot(
-                    '', regexp=source[0], subjects_dir=op.join(root,'simulation_parameters'), verbose=verbose
+                    '', regexp=source[0], subjects_dir=op.join(root,'simulation_parameters'),
+                    verbose=verbose
                 )[0]
                 label = mne.label.select_sources(
                     '',
@@ -362,8 +364,7 @@ def simulate(
 def demo(cpus, n_events, seed=123, overwrite=False):
     """Create example data for the tutorials."""
     ## Imports and code specific to the simulation (see tutorial 3 and 4 for real data)
-    from scipy.stats import gamma
-    from hmp.io import read_mne_data
+
 
     random_gen = np.random.default_rng(seed=seed)
 
@@ -398,8 +399,8 @@ def demo(cpus, n_events, seed=123, overwrite=False):
 
     # Simulating and recover information on electrode location and true time of the simulated events
     files = simulate(
-        sources, n_trials, cpus, file, path='sample_data', overwrite=overwrite, seed=seed, noise=True, sfreq=sfreq,
-        event_length_samples=[int(event_width / 1000 * sfreq)]*len(sources)
+        sources, n_trials, cpus, file, path='sample_data', overwrite=overwrite, seed=seed,
+        noise=True, sfreq=sfreq
     )
 
     generating_events = np.load(files[1])
@@ -453,7 +454,6 @@ def classification_true(
     corresp_true_idx : np.ndarray
         Indices in the test estimate that correspond to the true events.
     """
-
     test_topologies = (test_topologies.copy() - test_topologies.mean(axis=1)) / test_topologies.std(
         axis=1
     )
@@ -509,7 +509,8 @@ def simulated_times_and_parameters(
         Value of the new sampling frequency if there is a difference between the initialized HMP
         object and the generating_events. Default is None.
     data : np.ndarray, optional
-        Alternative data to use instead of cross-correlation contained in trial_data.crosscorr. Default is None.
+        Alternative data to use instead of cross-correlation contained in trial_data.crosscorr.
+        Default is None.
 
     Returns
     -------
@@ -522,7 +523,6 @@ def simulated_times_and_parameters(
     true_activities : np.ndarray
         Actual values at simulated event times.
     """
-
     sfreq = model.sfreq
     n_stages = len(np.unique(generating_events[:, 2])[1:])  # one trigger = one source
     n_events = n_stages - 1
