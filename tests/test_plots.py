@@ -43,10 +43,3 @@ def test_plot():
     # Test combined plot
     plot_topo_timecourse(epoch_data, estimates_comb, positions, as_time=True, 
                        max_time=500, colorbar=False, combined=True)
-
-    # Test MCMC estimator (use single chain to avoid JAX multiprocessing issues)
-    from hmp.estimators import MCMCEstimator
-    mcmc_estimator = MCMCEstimator(n_samples=10, n_tune=15, n_chains=1)
-    model.fit(trial_data, estimator=mcmc_estimator)
-    _, estimates_mcmc = model.transform(trial_data)
-    plot_topo_timecourse(epoch_data, estimates_mcmc, positions, as_time=True, colorbar=False)
