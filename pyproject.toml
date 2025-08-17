@@ -48,7 +48,6 @@ keywords = [
 
 [project.optional-dependencies]
 test = ["pytest", "ruff"]
-mcmc = ["pymc>=5.0", "arviz>=0.15", "jax>=0.4.0", "jaxlib>=0.4.0"]
 docs = [
     "sphinx<9.0.0", "sphinx-rtd-theme", "sphinxcontrib-napoleon","nbsphinx",
     "sphinx-autodoc-typehints", "sphinx_inline_tabs", "sphinx_copybutton",
