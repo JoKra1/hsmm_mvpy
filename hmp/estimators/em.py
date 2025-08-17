@@ -93,6 +93,40 @@ class EMEstimator(BaseEstimator):
             "Both maps need to indicate the same number of groups."
         )
 
+        # Handle multiple starting points
+        if initial_channel_pars.ndim == 4:
+            # Multiple starting points provided
+            n_starting_points = initial_channel_pars.shape[0]
+            channel_pars_list = [initial_channel_pars[i] for i in range(n_starting_points)]
+            time_pars_list = [initial_time_pars[i] for i in range(n_starting_points)]
+        else:
+            # Single starting point
+            channel_pars_list = [initial_channel_pars]
+            time_pars_list = [initial_time_pars]
+            
+        # Run EM for each starting point
+        results = []
+        for c_pars, t_pars in zip(channel_pars_list, time_pars_list):
+            result = self._fit_single_starting_point(
+                trial_data, c_pars, t_pars, model, fixed_channel_pars, 
+                fixed_time_pars, channel_map, time_map, groups, cpus
+            )
+            results.append(result)
+        
+        # Select best result based on likelihood
+        likelihoods = [r.likelihood for r in results]
+        best_idx = np.argmax(likelihoods)
+        
+        return results[best_idx]
+
+    def _fit_single_starting_point(self, trial_data, initial_channel_pars: np.ndarray, 
+                                  initial_time_pars: np.ndarray, model, 
+                                  fixed_channel_pars: list = None, fixed_time_pars: list = None,
+                                  channel_map: np.ndarray = None, time_map: np.ndarray = None,
+                                  groups: np.ndarray = None, 
+                                  cpus: int = 1) -> EstimationResult:
+        """Fit parameters for a single starting point."""
+
         lkh, eventprobs = model._distribute_groups(
             trial_data, initial_channel_pars, initial_time_pars, 
             channel_map, time_map, groups, cpus=cpus

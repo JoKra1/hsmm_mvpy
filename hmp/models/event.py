@@ -20,9 +20,11 @@ from hmp.trialdata import TrialData
 
 try:
     from hmp.estimators.base import EstimationResult
+    from hmp.estimators.em import EMEstimator
 except ImportError:
     # Handle case where estimators module is not available
     EstimationResult = None
+    EMEstimator = None
 
 try:
     __IPYTHON__
@@ -149,299 +151,84 @@ class EventModel(BaseModel):
         return (n_groups, groups, glabels, channel_map, time_map, channel_pars, time_pars, 
                 fixed_channel_pars, fixed_time_pars, grouping_dict)
 
-    def fit(  # noqa: PLR0912, PLR0915
-        self,
-        trial_data: TrialData,
-        channel_pars: np.ndarray = None,
-        time_pars: np.ndarray = None,
-        fixed_time_pars: list = None,
-        fixed_channel_pars: list = None,
-        verbose: bool = True,
-        cpus: int = 1,
-        channel_map: np.ndarray = None,
-        time_map: np.ndarray = None,
-        grouping_dict: dict = None,
-        estimator=None,
-    ):
+    def fit(self, trial_data: TrialData, initial_channel_pars=None, initial_time_pars=None, estimator=None, **kwargs):
         """
-        Fit HMP for a single n_events model.
+        Fit the model to trial data using the new estimation framework.
 
         Parameters
         ----------
         trial_data : TrialData
             The trial data to fit the model to.
-        channel_pars : ndarray, optional
-            2D ndarray (n_groups * n_events * n_channels) or
-            4D (starting_points * n_groups * n_groups * n_events * n_channels),
-            initial conditions for event channel contributions. Default is None.
-        time_pars : ndarray, optional
-            3D ndarray (n_groups * n_stages * 2) or 4D (starting_points * n_groups * n_stages * 2),
-            initial conditions for time distribution parameters. Default is None.
-        fixed_time_pars : list, optional
-            Indices of time parameters to fix during estimation. Default is None.
-        fixed_channel_pars : list, optional
-            Indices of channel parameters to fix during estimation. Default is None.
-        tolerance : float, optional
-            Convergence tolerance for the expectation maximization algorithm. Default is 1e-4.
-        max_iteration : int, optional
-            Maximum number of iterations for the expectation maximization algorithm. Default is 1e3.
-        min_iteration : int, optional
-            Minimum number of iterations for the expectation maximization algorithm. Default is 1.
-        verbose : bool, optional
-            If True, displays output useful for debugging. Default is True.
-        cpus : int, optional
-            Number of cores to use in multiprocessing functions. Default is 1.
-        channel_map : ndarray, optional
-            2D ndarray (n_groups * n_events) indicating which channel contributions
-            are shared between groups. Default is None.
-        time_map : ndarray, optional
-            2D ndarray (n_groups * n_stages) indicating which time parameters are
-            shared between groups. Default is None.
-        grouping_dict : dict, optional
-            Dictionary defining groups for grouping modeling. Keys are group names,
-            and values are lists of groups.
-            Default is None.
-        estimator : BaseEstimator, optional
-            Estimator to use for parameter fitting. If provided, returns EstimationResult.
-            If None, uses traditional EM approach and returns None (backward compatibility).
+        initial_channel_pars : np.ndarray, optional
+            Initial channel parameters for fitting. If None, will be automatically generated.
+        initial_time_pars : np.ndarray, optional
+            Initial time parameters for fitting. If None, will be automatically generated.
+        estimator : Estimator instance, optional
+            An estimator instance (e.g., EMEstimator) configured with the desired parameters.
+            If None, will create a default EMEstimator instance.
+        **kwargs
+            Additional keyword arguments passed to the estimator or used for parameter preparation.
 
         Returns
         -------
-        EstimationResult or None
-            If estimator is provided, returns EstimationResult with fitted parameters.
-            If estimator is None, returns None and sets model attributes (backward compatibility).
+        EstimationResult
+            The estimation result containing fitted parameters and metadata.
         """
+        # Create default estimator if none provided
+        if estimator is None:
+            if EMEstimator is None:
+                raise ImportError("EMEstimator not available. Please check your installation.")
+            estimator = EMEstimator(
+                tolerance=kwargs.get('tolerance', self.tolerance),
+                max_iteration=kwargs.get('max_iteration', int(self.max_iteration)),
+                min_iteration=kwargs.get('min_iteration', self.min_iteration)
+            )
         
-        # If an estimator is provided, use the new estimation framework
-        if estimator is not None:
-            if EstimationResult is None:
-                raise ImportError("Estimators module not available. Cannot use estimator parameter.")
-            
-            # Initialize dimensions
+        # Prepare parameters using the existing _prepare_parameters method
+        # First set n_dims from trial data if not already set
+        if self.n_dims is None:
             self.n_dims = trial_data.n_dims
-
-            # Prepare parameters using helper method  
-            (n_groups, groups, glabels, channel_map, time_map, channel_pars, time_pars, 
-             fixed_channel_pars, fixed_time_pars, grouping_dict) = self._prepare_parameters(
-                trial_data, channel_pars, time_pars, fixed_time_pars, fixed_channel_pars,
-                grouping_dict, channel_map, time_map, verbose
-            )
             
-            if verbose:
-                print(f"Estimating {self.n_events} events model using {estimator.get_method_name()}")
-            
-            # Use the estimator to fit parameters
-            result = estimator.fit(
-                trial_data=trial_data,
-                initial_channel_pars=channel_pars,
-                initial_time_pars=time_pars,
-                model=self,
-                fixed_channel_pars=fixed_channel_pars,
-                fixed_time_pars=fixed_time_pars,
-                channel_map=channel_map,
-                time_map=time_map,
-                groups=groups,
-                cpus=cpus
-            )
-            
-            # Set model attributes from result
-            self._fitted = True
-            self.lkhs = result.likelihood
-            self.channel_pars = result.channel_pars
-            self.time_pars = result.time_pars
-            self.traces = result.diagnostics.get('traces', [result.likelihood])
-            
-            # Handle time_pars_dev properly for cumulative method compatibility
-            time_pars_dev_from_estimator = result.diagnostics.get('time_pars_dev', None)
-            if time_pars_dev_from_estimator is not None:
-                # If time_pars_dev is 3D (from multi-group), take first group for compatibility
-                if isinstance(time_pars_dev_from_estimator, np.ndarray) and time_pars_dev_from_estimator.ndim == 4:
-                    # Shape is (iterations, groups, stages, 2) -> take first group
-                    self.time_pars_dev = time_pars_dev_from_estimator[:, 0, :, :]
-                elif isinstance(time_pars_dev_from_estimator, np.ndarray) and time_pars_dev_from_estimator.ndim == 3:
-                    # Shape is (iterations, stages, 2) -> already correct
-                    self.time_pars_dev = time_pars_dev_from_estimator
-                else:
-                    # Convert to list if needed
-                    self.time_pars_dev = list(time_pars_dev_from_estimator)
-            else:
-                # Fallback: create from final time_pars
-                if result.time_pars.ndim == 3:
-                    self.time_pars_dev = [result.time_pars[0]]  # Take first group
-                else:
-                    self.time_pars_dev = [result.time_pars]
-            self.grouping_dict = grouping_dict
-            self.group = groups
-            self.channel_map = channel_map
-            self.time_map = time_map
-            
-            return result
-        
-        # Traditional EM approach (backward compatibility)
-        # A dict containing all the info we want to keep, populated along the func
-        infos_to_store = {}
-        infos_to_store["sfreq"] = self.sfreq
-        infos_to_store["event_width_samples"] = self.event_width_samples
-        infos_to_store["tolerance"] = self.tolerance
-
-        self.n_dims = trial_data.n_dims
-
-        if grouping_dict is None:
-            grouping_dict = self.grouping_dict
-            channel_map = self.channel_map
-            time_map = self.time_map
-        n_groups, groups, glabels = self.group_constructor(
-            trial_data, grouping_dict, channel_map, time_map, verbose
+        (n_groups, groups, glabels, channel_map, time_map, 
+         channel_pars, time_pars, fixed_channel_pars, fixed_time_pars, 
+         grouping_dict) = self._prepare_parameters(
+            trial_data, 
+            channel_pars=initial_channel_pars,
+            time_pars=initial_time_pars,
+            fixed_time_pars=kwargs.get('fixed_time_pars'),
+            fixed_channel_pars=kwargs.get('fixed_channel_pars'),
+            grouping_dict=kwargs.get('grouping_dict'),
+            channel_map=kwargs.get('channel_map'),
+            time_map=kwargs.get('time_map'),
+            verbose=kwargs.get('verbose', True)
         )
-        infos_to_store["channel_map"] = channel_map
-        infos_to_store["time_map"] = time_map
-        infos_to_store["glabels"] = glabels
-        infos_to_store["grouping_dict"] = grouping_dict
-        if verbose:
-            if time_pars is None:
-                print(
-                    f"Estimating {self.n_events} events model with {self.starting_points} "
-                    "starting point(s)"
-                )
-            else:
-                print(f"Estimating {self.n_events} events model")
-
-        # Formatting parameters
-        if isinstance(time_pars, (xr.DataArray, xr.Dataset)):
-            time_pars = time_pars.dropna(dim="stage").values
-        if isinstance(channel_pars, (xr.DataArray, xr.Dataset)):
-            channel_pars = channel_pars.dropna(dim="event").values
-        if isinstance(channel_pars, np.ndarray):
-            channel_pars = channel_pars.copy()
-        if isinstance(time_pars, np.ndarray):
-            time_pars = time_pars.copy()
-        if self.fixed_time_pars is None:
-            fixed_time_pars = []
-        else:
-            fixed_time_pars = self.fixed_time_pars
-            infos_to_store["fixed_time_pars"] = fixed_time_pars
-        if self.fixed_channel_pars is None:
-            fixed_channel_pars = []
-        else:
-            fixed_channel_pars = self.fixed_channel_pars
-            infos_to_store["fixed_channel_pars"] = fixed_channel_pars
-
-        if time_pars is None:
-            # If no time parameters starting points are provided generate standard ones
-            # Or random ones if starting_points > 1
-            time_pars = (
-                np.zeros((n_groups, self.n_events + 1, 2)) * np.nan
-            )  # by default nan for missing stages
-            for cur_group in range(n_groups):
-                time_group = np.where(time_map[cur_group, :] >= 0)[0]
-                n_stage_group = len(time_group)
-                # by default starting point is to split the average duration in equal bins
-                time_pars[cur_group, time_group, :] = np.tile(
-                    [
-                        self.distribution.shape,
-                        self.distribution.mean_to_scale(
-                            np.mean(trial_data.durations[groups == cur_group]) / (n_stage_group)
-                        ),
-                    ],
-                    (n_stage_group, 1),
-                )
-            initial_p = time_pars
-            time_pars = [initial_p]
-            if self.starting_points > 1:
-                if self.max_scale is None:
-                    raise ValueError(
-                            "If using multiple starting points, a maximum distance between events"
-                            " needs to be provided using the max_scale argument."
-                        )
-                infos_to_store["starting_points"] = self.starting_points
-                for _ in np.arange(self.starting_points):
-                    proposal_p = (
-                        np.zeros((n_groups, self.n_events + 1, 2)) * np.nan
-                    )  # by default nan for missing stages
-                    for cur_group in range(n_groups):
-                        time_group = np.where(time_map[cur_group, :] >= 0)[0]
-                        n_stage_group = len(time_group)
-                        proposal_p[cur_group, time_group, :] = self.gen_random_stages(
-                            n_stage_group - 1)
-                        proposal_p[cur_group, fixed_time_pars, :] = initial_p[0, fixed_time_pars]
-                    time_pars.append(proposal_p)
-                time_pars = np.array(time_pars)
-        else:
-            infos_to_store["sp_time_pars"] = time_pars
-
-        if channel_pars is None:
-            # By defaults c_pars are initiated to 0
-            channel_pars = np.zeros((n_groups, self.n_events, self.n_dims), dtype=np.float64)
-            if (channel_map < 0).any():  # set missing c_pars to nan
-                for cur_group in range(n_groups):
-                    channel_pars[cur_group, np.where(channel_map[cur_group, :] < 0)[0], :] = np.nan
-            initial_m = channel_pars
-            channel_pars = np.tile(initial_m, (self.starting_points + 1, 1, 1, 1))
-        else:
-            infos_to_store["sp_channel_pars"] = channel_pars
-
-        if cpus > 1:
-            inputs = zip(
-                itertools.repeat(trial_data),
-                channel_pars,
-                time_pars,
-                itertools.repeat(fixed_channel_pars),
-                itertools.repeat(fixed_time_pars),
-                itertools.repeat(self.max_iteration),
-                itertools.repeat(self.tolerance),
-                itertools.repeat(self.min_iteration),
-                itertools.repeat(channel_map),
-                itertools.repeat(time_map),
-                itertools.repeat(groups),
-                itertools.repeat(1),
-            )
-            with mp.Pool(processes=cpus) as pool:
-                if self.starting_points > 1:
-                    estimates = list(tqdm(pool.imap(self._EM_star, inputs),
-                                          total=len(channel_pars)))
-                else:
-                    estimates = pool.starmap(self.EM, inputs)
-
-        else:  # avoids problems if called in an already parallel function
-            estimates = []
-            for t_pars, c_pars in zip(time_pars, channel_pars):
-                estimates.append(
-                    self.EM(
-                        trial_data,
-                        c_pars,
-                        t_pars,
-                        fixed_channel_pars,
-                        fixed_time_pars,
-                        self.max_iteration,
-                        self.tolerance,
-                        self.min_iteration,
-                        channel_map,
-                        time_map,
-                        groups,
-                        1,
-                    )
-                )
-            resetwarnings()
-
-        lkhs = np.array([x[0] for x in estimates])
-        if self.starting_points > 1 :
-            max_lkhs = np.argmax(lkhs)
-        else:
-            max_lkhs = 0
-
-        if np.isneginf(lkhs.sum()):
-            raise ValueError("Fit failed, inspect provided starting points")
-        else:
-            self._fitted = True
-            self.lkhs = lkhs[max_lkhs]
-            self.channel_pars =  np.array(estimates[max_lkhs][1])
-            self.time_pars = np.array(estimates[max_lkhs][2])
-            self.traces = np.array(estimates[max_lkhs][3])
-            self.time_pars_dev = np.array(estimates[max_lkhs][4])
-            self.grouping_dict = grouping_dict
-            self.group = groups
-            self.channel_map = channel_map
-            self.time_map = time_map
+        
+        # Fit using the provided estimator
+        result = estimator.fit(
+            trial_data,
+            initial_channel_pars=channel_pars,
+            initial_time_pars=time_pars,
+            model=self,
+            channel_map=channel_map,
+            time_map=time_map,
+            groups=groups,
+            fixed_channel_pars=fixed_channel_pars,
+            fixed_time_pars=fixed_time_pars,
+            cpus=kwargs.get('cpus', 1),
+            **{k: v for k, v in kwargs.items() if k not in 
+               ['tolerance', 'max_iteration', 'min_iteration', 'fixed_time_pars', 
+                'fixed_channel_pars', 'grouping_dict', 'channel_map', 'time_map', 'cpus']}
+        )
+        
+        # Store results in model
+        self.channel_pars = result.channel_pars
+        self.time_pars = result.time_pars
+        self.lkhs = result.likelihood
+        self.traces = result.diagnostics.get('traces', np.array([result.likelihood]))
+        self.time_pars_dev = result.diagnostics.get('time_pars_dev', result.time_pars[np.newaxis, ...])
+        self._fitted = True
+        
+        return result
 
     def transform(self, trial_data: TrialData) -> tuple[np.ndarray, xr.DataArray]:
         """
@@ -574,150 +361,6 @@ class EventModel(BaseModel):
                 "channel": range(self.n_dims),
             },
         )
-
-    def _EM_star(self, args):  # for tqdm usage  #noqa
-        return self.EM(*args)
-
-    def EM(  # noqa
-        self,
-        trial_data: TrialData,
-        initial_channel_pars: np.ndarray,
-        initial_time_pars: np.ndarray,
-        fixed_channel_pars: list[int] = None,
-        fixed_time_pars: list[int] = None,
-        max_iteration: int = 1000,
-        tolerance: float = 1e-4,
-        min_iteration: int = 1,
-        channel_map: np.ndarray = None,
-        time_map: np.ndarray = None,
-        groups: np.ndarray = None,
-        cpus: int = 1,
-    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Fit using expectation maximization.
-
-        Parameters
-        ----------
-        trial_data : TrialData
-            The trial data to fit the model to.
-        initial_channel_pars : np.ndarray
-            2D ndarray (n_events * n_channels) or 3D (iteration * n_events * n_channels),
-            initial conditions for event channel contributions.
-        initial_time_pars : np.ndarray
-            2D ndarray (n_stages * n_parameters) or 3D (iteration * n_stages * n_parameters),
-            initial conditions for time distribution parameters.
-        fixed_channel_pars : list[int], optional
-            Indices of channel parameters to fix during estimation.
-        fixed_time_pars : list[int], optional
-            Indices of time parameters to fix during estimation.
-        max_iteration : int, optional
-            Maximum number of iterations for the expectation maximization algorithm.
-            Default is 1000.
-        tolerance : float, optional
-            Convergence tolerance for the expectation maximization algorithm. Default is 1e-4.
-        min_iteration : int, optional
-            Minimum number of iterations for the expectation maximization algorithm. Default is 1.
-        channel_map : np.ndarray, optional
-            2D array mapping channel parameters to groups. Default is None.
-        time_map : np.ndarray, optional
-            2D array mapping time parameters to groups. Default is None.
-        groups : np.ndarray, optional
-            Array indicating the groups for grouping modeling. Default is None.
-        cpus : int, optional
-            Number of cores to use in multiprocessing functions. Default is 1.
-
-        Returns
-        -------
-        lkh : float
-        Summed log probabilities.
-        channel_pars : np.ndarray
-        Estimated channel contributions for each event.
-        time_pars : np.ndarray
-        Estimated time distribution parameters for each stage.
-        traces : np.ndarray
-        Log-likelihood values for each EM iteration.
-        time_pars_dev : np.ndarray
-        Time parameters for each iteration of the EM algorithm.
-        """
-        assert channel_map.shape[0] == time_map.shape[0], (
-            "Both maps need to indicate the same number of groups."
-        )
-
-        lkh, eventprobs = self._distribute_groups(
-            trial_data, initial_channel_pars, initial_time_pars,
-            channel_map, time_map, groups, cpus=cpus
-        )
-        data_groups = np.unique(groups)
-        channel_pars = initial_channel_pars.copy()
-        time_pars = initial_time_pars.copy()
-        traces = [lkh]
-        time_pars_dev = [time_pars.copy()]
-        i = 0
-
-        lkh_prev = lkh.copy()
-        while i < max_iteration:  # Expectation-Maximization algorithm
-            if i >= min_iteration and (
-                np.isneginf(lkh.sum()) or \
-                tolerance > (lkh.sum() - lkh_prev.sum()) / np.abs(lkh_prev.sum())
-            ):
-                break
-
-            # As long as new run gives better likelihood, go on
-            lkh_prev = lkh.copy()
-
-            for cur_group in data_groups:  # get params/c_pars
-                channel_map_group = np.where(channel_map[cur_group, :] >= 0)[0]
-                time_map_group = np.where(time_map[cur_group, :] >= 0)[0]
-                epochs_group = np.where(groups == cur_group)[0]
-
-                # get c_pars/t_pars by group
-                c_par, t_par = self.get_channel_time_parameters_expectation(
-                        trial_data,
-                        eventprobs.values[:, :np.max(trial_data.durations[epochs_group]),
-                                          channel_map_group],
-                        subset_epochs=epochs_group,
-                )
-                channel_pars[cur_group, channel_map_group, :] = c_par
-                time_pars[cur_group, time_map_group, :] = t_par
-
-                channel_pars[cur_group, fixed_channel_pars, :] = initial_channel_pars[
-                    cur_group, fixed_channel_pars, :
-                ].copy()
-                time_pars[cur_group, fixed_time_pars, :] = initial_time_pars[
-                    cur_group, fixed_time_pars, :
-                ].copy()
-
-            # set c_pars to mean if requested in map
-            for m in range(self.n_events):
-                for m_set in np.unique(channel_map[:, m]):
-                    if m_set >= 0:
-                        channel_pars[channel_map[:, m] == m_set, m, :] = np.mean(
-                            channel_pars[channel_map[:, m] == m_set, m, :], axis=0
-                        )
-
-            # set param to mean if requested in map
-            for p in range(self.n_events + 1):
-                for p_set in np.unique(time_map[:, p]):
-                    if p_set >= 0:
-                        time_pars[time_map[:, p] == p_set, p, :] = np.mean(
-                            time_pars[time_map[:, p] == p_set, p, :], axis=0
-                        )
-
-
-            lkh, eventprobs = self._distribute_groups(
-                trial_data, channel_pars, time_pars, channel_map, time_map, groups, cpus=cpus
-            )
-            traces.append(lkh)
-            time_pars_dev.append(time_pars.copy())
-            i += 1
-
-        if i == max_iteration:
-            warn(
-                f"Convergence failed, estimation hit the maximum number of iterations: "
-                f"({int(max_iteration)})",
-                RuntimeWarning,
-            )
-        return lkh, channel_pars, time_pars, np.array(traces), np.array(time_pars_dev)
 
     def get_channel_time_parameters_expectation(
         self,
