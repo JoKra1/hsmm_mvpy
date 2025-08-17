@@ -30,6 +30,19 @@ class EMEstimator(BaseEstimator):
     
     def __init__(self, max_iteration: int = 1000, tolerance: float = 1e-4, 
                  min_iteration: int = 1, **kwargs):
+        """Initialize the EM estimator.
+        
+        Parameters
+        ----------
+        max_iteration : int, optional
+            Maximum number of EM iterations. Default is 1000.
+        tolerance : float, optional
+            Convergence tolerance for likelihood improvement. Default is 1e-4.
+        min_iteration : int, optional
+            Minimum number of EM iterations. Default is 1.
+        **kwargs
+            Additional keyword arguments passed to BaseEstimator.
+        """
         super().__init__(**kwargs)
         self.max_iteration = max_iteration
         self.tolerance = tolerance
@@ -115,12 +128,14 @@ class EMEstimator(BaseEstimator):
                     )
                 )
 
-                channel_pars[cur_group, fixed_channel_pars, :] = initial_channel_pars[
-                    cur_group, fixed_channel_pars, :
-                ].copy()
-                time_pars[cur_group, fixed_time_pars, :] = initial_time_pars[
-                    cur_group, fixed_time_pars, :
-                ].copy()
+                if fixed_channel_pars is not None and len(fixed_channel_pars) > 0:
+                    channel_pars[cur_group, fixed_channel_pars, :] = initial_channel_pars[
+                        cur_group, fixed_channel_pars, :
+                    ].copy()
+                if fixed_time_pars is not None and len(fixed_time_pars) > 0:
+                    time_pars[cur_group, fixed_time_pars, :] = initial_time_pars[
+                        cur_group, fixed_time_pars, :
+                    ].copy()
 
             # set c_pars to mean if requested in map
             for m in range(model.n_events):

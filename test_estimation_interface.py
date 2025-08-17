@@ -2,6 +2,7 @@
 """Quick test of the estimation interface integration."""
 
 import numpy as np
+import xarray as xr
 from hmp.estimators import EMEstimator, BaseEstimator, EstimationResult
 from hmp.models import EventModel
 from hmp.trialdata import TrialData
@@ -17,17 +18,28 @@ def test_estimation_interface():
     duration = 100
     sfreq = 250
     
-    # Create TrialData
+    # Create TrialData with proper structure
     data = np.random.randn(n_trials * duration, n_channels)
     starts = np.arange(0, n_trials * duration, duration)
     ends = starts + duration - 1
-    durations = np.full(n_trials, duration)
+    durations_array = np.full(n_trials, duration)
+    
+    # Create xarray for durations
+    durations_xr = xr.DataArray(
+        durations_array, 
+        dims=['trial'],
+        coords={'trial': range(n_trials)}
+    )
     
     trial_data = TrialData(
-        cross_corr=data,
+        xrdurations=durations_xr,
         starts=starts,
         ends=ends,
-        durations=durations
+        n_trials=n_trials,
+        n_samples=n_trials * duration,
+        sfreq=sfreq,
+        offset=0,
+        cross_corr=data
     )
     
     # Create model
