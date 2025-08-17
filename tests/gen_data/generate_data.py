@@ -1,8 +1,8 @@
-import os
 import numpy as np
 from scipy.stats import gamma
 
 from hmp import simulations
+
 
 def create_data():
     sfreq = 100

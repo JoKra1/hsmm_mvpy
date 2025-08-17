@@ -1,19 +1,17 @@
 import numpy as np
 import xarray as xr
+from test_io import init_data
 
 import hmp
 from hmp import simulations
+from hmp.distributions import Gamma
 from hmp.models import EliminativeMethod, EventModel
 from hmp.patterns import HalfSine
-from hmp.distributions import Gamma
 from hmp.trialdata import TrialData
-from hmp import preprocessing
 
-
-from test_io import init_data
 
 def test_backward_simple():
-    """ test a simple fit_transform on perfect data and compare to ground truth."""
+    """Test a simple fit_transform on perfect data and compare to ground truth."""
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data()
     hmp_data = hmp.preprocessing.Standard(epoch_data, n_comp=2,).data
     # Data b is without noise, recovery should be perfect
@@ -36,7 +34,7 @@ def test_backward_simple():
     # fit the model
     model.fit(trial_data_b)
     # Transform the data
-    estimates = model.transform(trial_data_b)
+    model.transform(trial_data_b)
 
     # testing if bacward identifies the 3 real events
     assert np.isclose(model.submodels[3].channel_pars, true_model.channel_pars, atol=1).all()

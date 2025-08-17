@@ -8,14 +8,12 @@ hidden multivariate pattern models.
 import itertools
 import multiprocessing as mp
 from itertools import product
-from warnings import resetwarnings, warn
 
 import numpy as np
 import xarray as xr
 from pandas import MultiIndex
 
 from hmp.models.base import BaseModel
-from hmp.patterns import HalfSine
 from hmp.trialdata import TrialData
 
 try:
@@ -28,9 +26,8 @@ except ImportError:
 
 try:
     __IPYTHON__
-    from tqdm.notebook import tqdm
 except NameError:
-    from tqdm import tqdm
+    pass
 
 
 
@@ -97,7 +94,7 @@ class EventModel(BaseModel):
                            verbose: bool = True):
         """
         Prepare parameters for estimation.
-        
+
         Returns
         -------
         tuple
@@ -116,7 +113,7 @@ class EventModel(BaseModel):
             fixed_time_pars = [] if fixed_time_pars is None else fixed_time_pars
         else:
             fixed_time_pars = self.fixed_time_pars
-            
+
         if self.fixed_channel_pars is None:
             fixed_channel_pars = [] if fixed_channel_pars is None else fixed_channel_pars
         else:
@@ -147,8 +144,8 @@ class EventModel(BaseModel):
             if (channel_map < 0).any():  # set missing c_pars to nan
                 for cur_group in range(n_groups):
                     channel_pars[cur_group, np.where(channel_map[cur_group, :] < 0)[0], :] = np.nan
-        
-        return (n_groups, groups, glabels, channel_map, time_map, channel_pars, time_pars, 
+
+        return (n_groups, groups, glabels, channel_map, time_map, channel_pars, time_pars,
                 fixed_channel_pars, fixed_time_pars, grouping_dict)
 
     def fit(self, trial_data: TrialData, initial_channel_pars=None, initial_time_pars=None, estimator=None, **kwargs):
@@ -183,16 +180,16 @@ class EventModel(BaseModel):
                 max_iteration=kwargs.get('max_iteration', int(self.max_iteration)),
                 min_iteration=kwargs.get('min_iteration', self.min_iteration)
             )
-        
+
         # Prepare parameters using the existing _prepare_parameters method
         # First set n_dims from trial data if not already set
         if self.n_dims is None:
             self.n_dims = trial_data.n_dims
-            
-        (n_groups, groups, glabels, channel_map, time_map, 
-         channel_pars, time_pars, fixed_channel_pars, fixed_time_pars, 
+
+        (n_groups, groups, glabels, channel_map, time_map,
+         channel_pars, time_pars, fixed_channel_pars, fixed_time_pars,
          grouping_dict) = self._prepare_parameters(
-            trial_data, 
+            trial_data,
             channel_pars=initial_channel_pars,
             time_pars=initial_time_pars,
             fixed_time_pars=kwargs.get('fixed_time_pars'),
@@ -202,7 +199,7 @@ class EventModel(BaseModel):
             time_map=kwargs.get('time_map'),
             verbose=kwargs.get('verbose', True)
         )
-        
+
         # Fit using the provided estimator
         result = estimator.fit(
             trial_data,
@@ -215,11 +212,11 @@ class EventModel(BaseModel):
             fixed_channel_pars=fixed_channel_pars,
             fixed_time_pars=fixed_time_pars,
             cpus=kwargs.get('cpus', 1),
-            **{k: v for k, v in kwargs.items() if k not in 
-               ['tolerance', 'max_iteration', 'min_iteration', 'fixed_time_pars', 
+            **{k: v for k, v in kwargs.items() if k not in
+               ['tolerance', 'max_iteration', 'min_iteration', 'fixed_time_pars',
                 'fixed_channel_pars', 'grouping_dict', 'channel_map', 'time_map', 'cpus']}
         )
-        
+
         # Store results in model
         self.channel_pars = result.channel_pars
         self.time_pars = result.time_pars
@@ -227,7 +224,7 @@ class EventModel(BaseModel):
         self.traces = result.diagnostics.get('traces', np.array([result.likelihood]))
         self.time_pars_dev = result.diagnostics.get('time_pars_dev', result.time_pars[np.newaxis, ...])
         self._fitted = True
-        
+
         return result
 
     def transform(self, trial_data: TrialData) -> tuple[np.ndarray, xr.DataArray]:

@@ -1,21 +1,18 @@
 import numpy as np
 import xarray as xr
+from test_fixed import init_data
+from test_io import init_data
 
 import hmp
 from hmp import simulations
+from hmp.distributions import Gamma
 from hmp.models import CumulativeMethod, EventModel
 from hmp.patterns import HalfSine
-from hmp.distributions import Gamma
 from hmp.trialdata import TrialData
-from hmp import preprocessing
 
-from test_fixed import init_data
-
-
-from test_io import init_data
 
 def test_cumulative_simple():
-    """ test a simple fit_transform on perfect data and compare to ground truth."""
+    """Test a simple fit_transform on perfect data and compare to ground truth."""
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data()
     hmp_data = hmp.preprocessing.Standard(epoch_data, n_comp=5, apply_zscore=False).data
     # Data b is without noise, recovery should be perfect
@@ -37,7 +34,7 @@ def test_cumulative_simple():
     # Cumulative estimation - try different parameters to find 3rd event
     model = CumulativeMethod(event_properties, step=10, tolerance=1e-3, by_sample=True)
     model.fit(trial_data_b, verbose=False)
-    estimates = model.transform(trial_data_b)
+    model.transform(trial_data_b)
 
     # testing if backward identifies the 3 real events
     assert np.isclose(model.final_model.channel_pars, true_model.channel_pars, atol=1).all()

@@ -1,8 +1,9 @@
 """Expectation-Maximization estimator for HMP models."""
 
-import numpy as np
+from typing import List, Optional
 from warnings import warn
-from typing import Union, List, Optional
+
+import numpy as np
 
 try:
     from .base import BaseEstimator, EstimationResult
@@ -13,11 +14,11 @@ except ImportError:
 
 class EMEstimator(BaseEstimator):
     """Expectation-Maximization parameter estimator.
-    
+
     This estimator implements the EM algorithm for parameter estimation
     in HMP models, providing maximum likelihood estimates of channel
     and time distribution parameters.
-    
+
     Parameters
     ----------
     max_iteration : int, optional
@@ -27,11 +28,11 @@ class EMEstimator(BaseEstimator):
     min_iteration : int, optional
         Minimum number of EM iterations. Default is 1.
     """
-    
-    def __init__(self, max_iteration: int = 1000, tolerance: float = 1e-4, 
+
+    def __init__(self, max_iteration: int = 1000, tolerance: float = 1e-4,
                  min_iteration: int = 1, **kwargs):
         """Initialize the EM estimator.
-        
+
         Parameters
         ----------
         max_iteration : int, optional
@@ -47,8 +48,8 @@ class EMEstimator(BaseEstimator):
         self.max_iteration = max_iteration
         self.tolerance = tolerance
         self.min_iteration = min_iteration
-        
-    def fit(self, trial_data, initial_channel_pars: np.ndarray, 
+
+    def fit(self, trial_data, initial_channel_pars: np.ndarray,
            initial_time_pars: np.ndarray, model=None,
            channel_map: Optional[np.ndarray] = None,
            time_map: Optional[np.ndarray] = None,
@@ -57,7 +58,7 @@ class EMEstimator(BaseEstimator):
            fixed_time_pars: Optional[List[int]] = None,
            cpus: int = 1, **kwargs) -> EstimationResult:
         """Fit model parameters using expectation-maximization.
-        
+
         Parameters
         ----------
         trial_data : TrialData
@@ -80,7 +81,7 @@ class EMEstimator(BaseEstimator):
             Indices of time parameters to fix during estimation
         cpus : int, optional
             Number of cores to use. Default is 1.
-            
+
         Returns
         -------
         EstimationResult
@@ -88,7 +89,7 @@ class EMEstimator(BaseEstimator):
         """
         if model is None:
             raise ValueError("EMEstimator requires a model instance to access helper methods")
-        
+
         assert channel_map.shape[0] == time_map.shape[0], (
             "Both maps need to indicate the same number of groups."
         )
@@ -103,47 +104,46 @@ class EMEstimator(BaseEstimator):
             # Single starting point
             channel_pars_list = [initial_channel_pars]
             time_pars_list = [initial_time_pars]
-            
+
         # Run EM for each starting point
         results = []
         for c_pars, t_pars in zip(channel_pars_list, time_pars_list):
             result = self._fit_single_starting_point(
-                trial_data, c_pars, t_pars, model, fixed_channel_pars, 
+                trial_data, c_pars, t_pars, model, fixed_channel_pars,
                 fixed_time_pars, channel_map, time_map, groups, cpus
             )
             results.append(result)
-        
+
         # Select best result based on likelihood
         likelihoods = [r.likelihood for r in results]
         best_idx = np.argmax(likelihoods)
-        
+
         return results[best_idx]
 
-    def _fit_single_starting_point(self, trial_data, initial_channel_pars: np.ndarray, 
-                                  initial_time_pars: np.ndarray, model, 
+    def _fit_single_starting_point(self, trial_data, initial_channel_pars: np.ndarray,
+                                  initial_time_pars: np.ndarray, model,
                                   fixed_channel_pars: list = None, fixed_time_pars: list = None,
                                   channel_map: np.ndarray = None, time_map: np.ndarray = None,
-                                  groups: np.ndarray = None, 
+                                  groups: np.ndarray = None,
                                   cpus: int = 1) -> EstimationResult:
         """Fit parameters for a single starting point."""
-
         lkh, eventprobs = model._distribute_groups(
-            trial_data, initial_channel_pars, initial_time_pars, 
+            trial_data, initial_channel_pars, initial_time_pars,
             channel_map, time_map, groups, cpus=cpus
         )
         data_groups = np.unique(groups)
-        channel_pars = initial_channel_pars.copy() 
+        channel_pars = initial_channel_pars.copy()
         time_pars = initial_time_pars.copy()
         traces = [lkh]
-        time_pars_dev = [time_pars.copy()] 
+        time_pars_dev = [time_pars.copy()]
         i = 0
+        lkh_prev = None
 
         while i < self.max_iteration:  # Expectation-Maximization algorithm
-            if i >= self.min_iteration and (
-                np.isneginf(lkh.sum()) or 
-                self.tolerance > (lkh.sum() - lkh_prev.sum()) / np.abs(lkh_prev.sum())
-            ):
-                break
+            if i >= self.min_iteration and lkh_prev is not None:
+                if (np.isneginf(lkh.sum()) or
+                    self.tolerance > (lkh.sum() - lkh_prev.sum()) / np.abs(lkh_prev.sum())):
+                    break
 
             # As long as new run gives better likelihood, go on
             lkh_prev = lkh.copy()
@@ -187,7 +187,7 @@ class EMEstimator(BaseEstimator):
                             time_pars[time_map[:, p] == p_set, p, :], axis=0
                         )
 
-            
+
             lkh, eventprobs = model._distribute_groups(
                 trial_data, channel_pars, time_pars, channel_map, time_map, groups, cpus=cpus
             )
@@ -201,11 +201,11 @@ class EMEstimator(BaseEstimator):
                 f"({int(self.max_iteration)})",
                 RuntimeWarning,
             )
-        
+
         # Determine convergence
         converged = len(traces) < self.max_iteration
         n_iterations = len(traces)
-        
+
         # Create diagnostics
         diagnostics = {
             'traces': np.array(traces),
@@ -213,9 +213,9 @@ class EMEstimator(BaseEstimator):
             'method': 'EM',
             'tolerance_achieved': np.abs(traces[-1] - traces[-2]) / np.abs(traces[-2]) if len(traces) > 1 else np.inf
         }
-        
+
         self._fitted = True
-        
+
         return EstimationResult(
             channel_pars=channel_pars,
             time_pars=time_pars,
@@ -226,15 +226,13 @@ class EMEstimator(BaseEstimator):
         )
 
     def _get_channel_time_parameters_expectation(
-        self, 
-        trial_data, 
-        eventprobs: np.ndarray, 
+        self,
+        trial_data,
+        eventprobs: np.ndarray,
         model,
         subset_epochs: list[int] = None
     ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Compute the channel and time parameters using the expectation step.
-        """
+        """Compute the channel and time parameters using the expectation step."""
         channel_pars = np.zeros((eventprobs.shape[2], model.n_dims))
         # Channel contribution from Expectation, Eq 11 from 2024 paper
         for event in range(eventprobs.shape[2]):
@@ -264,15 +262,13 @@ class EMEstimator(BaseEstimator):
         return channel_pars, time_pars
 
     def _scale_parameters(self, model, averagepos: np.ndarray) -> np.ndarray:
-        """
-        Scale parameters from the average position of events.
-        """
+        """Scale parameters from the average position of events."""
         params = np.zeros((len(averagepos), 2), dtype=np.float64)
         params[:, 0] = model.distribution.shape
         params[:, 1] = np.diff(averagepos, prepend=0)
         params[:, 1] = model.distribution.mean_to_scale(params[:, 1])
         return params
-    
+
     def supports_uncertainty(self) -> bool:
         """EM provides point estimates, not uncertainty."""
         return False

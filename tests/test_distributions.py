@@ -1,8 +1,9 @@
-import pytest
 import numpy as np
-from scipy.stats import gamma, lognorm, invgauss, weibull_min
+import pytest
 from scipy.special import gamma as gamma_func
+
 from hmp.distributions import Gamma, Lognorm, Wald, Weibull
+
 
 @pytest.mark.parametrize("shape, scale, expected_mean", [
     (2, 3, 6),

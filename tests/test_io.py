@@ -2,22 +2,17 @@ from pathlib import Path
 
 import numpy as np
 
-from hmp import io
-from hmp import simulations
-from hmp import utils
-from hmp.patterns import HalfSine
-from hmp.distributions import Gamma
-from hmp import preprocessing
-from hmp.trialdata import TrialData
+from hmp import io, preprocessing, simulations, utils
 from hmp.models import EventModel
-
+from hmp.patterns import HalfSine
+from hmp.trialdata import TrialData
 
 DATA_DIR = Path("tests", "gen_data")
 DATA_DIR_A = DATA_DIR / "dataset_a"
 DATA_DIR_B = DATA_DIR / "dataset_b"
 
 def init_data():
-    """ Initialize all data and model related info."""
+    """Initialize all data and model related info."""
     sfreq = 100
     n_events = 3
     events = []
@@ -48,5 +43,4 @@ def test_save_dat():
     _, estimates = model.fit_transform(trial_data_b)
 
     io.save_eventprobs_csv(estimates, 'test')
-    
-    
+

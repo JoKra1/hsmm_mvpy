@@ -3,20 +3,20 @@
 from .base import BaseEstimator, EstimationResult
 from .em import EMEstimator
 from .utils import (
-    ConvergenceChecker, 
-    RelativeLikelihoodConvergence,
+    ConvergenceChecker,
     ParameterConvergence,
+    RelativeLikelihoodConvergence,
     compute_log_likelihood,
+    initialize_parameters,
     validate_parameters,
-    initialize_parameters
 )
 
 __all__ = [
-    "BaseEstimator", 
-    "EstimationResult", 
+    "BaseEstimator",
+    "EstimationResult",
     "EMEstimator",
     "ConvergenceChecker",
-    "RelativeLikelihoodConvergence", 
+    "RelativeLikelihoodConvergence",
     "ParameterConvergence",
     "compute_log_likelihood",
     "validate_parameters",
