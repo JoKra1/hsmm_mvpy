@@ -305,6 +305,9 @@ def centered_activity(
             max(times.sel(event=event + cut_after_event).data - times.sel(event=event).data) + 1
         )
 
+    n_samples = np.rint(n_samples)
+    baseline = np.rint(baseline)
+
     if 'epoch' in data.dims:
         data = (
             data.stack({'trial':['participant','epoch']})
@@ -316,6 +319,10 @@ def centered_activity(
     )
     data = data.sel(trial=common_trial)
     times = times.sel(trial=common_trial)
+
+    assert ~np.any(times > data.sample.max()),\
+        "At least one trial is longer than the maximum possible sample.\
+        Provided times should be in sample not on the millisecond scale"
 
     centered_data = np.tile(
         np.nan,
@@ -367,10 +374,8 @@ def centered_activity(
         # Determine sample in the signal to store
         start_idx = int(times.sel(event=event, trial=trial) + lower_lim)
         end_idx = int(times.sel(event=event, trial=trial) + upper_lim)
-        trial_time = slice(start_idx, end_idx)
-        trial_elec = trial_dat.sel(channel=channel, sample=trial_time).squeeze(
-            "trial"
-        )
+        trial_elec = trial_dat.sel(channel=channel, sample=slice(start_idx, end_idx))\
+            .squeeze("trial")
         # If center, adjust to always center on the same sample if lower_lim < baseline
         baseline_adjusted_start = int(abs(baseline - lower_lim))
         baseline_adjusted_end = baseline_adjusted_start + trial_elec.shape[-1]
@@ -378,6 +383,7 @@ def centered_activity(
 
         centered_data[i, :, trial_time_arr] = trial_elec
         trial_times[i] = times.sel(event=event, trial=trial)
+
     trial_x_part = xr.Coordinates.from_pandas_multiindex(
         MultiIndex.from_arrays([participants, epochs], names=("participant", "epoch")),
         "trial",
