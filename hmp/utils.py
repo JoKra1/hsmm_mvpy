@@ -314,6 +314,9 @@ def centered_activity(
     common_trial = np.intersect1d(
         times["trial"].values, data["trial"].values
     )
+    data = data.sel(trial=common_trial)
+    times = times.sel(trial=common_trial)
+
     centered_data = np.tile(
         np.nan,
         (len(common_trial), len(channel), int(round(n_samples - baseline + 1))),
