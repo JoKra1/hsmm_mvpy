@@ -318,7 +318,7 @@ def centered_activity(
         np.nan,
         (len(common_trial), len(channel), int(round(n_samples - baseline + 1))),
     )
-    
+
     trial_times = np.zeros(len(common_trial)) * np.nan
     participants = []
     epochs = np.zeros(len(common_trial))
@@ -365,7 +365,6 @@ def centered_activity(
         start_idx = int(times.sel(event=event, trial=trial) + lower_lim)
         end_idx = int(times.sel(event=event, trial=trial) + upper_lim)
         trial_time = slice(start_idx, end_idx)
-        trial_time_idx = slice(start_idx, end_idx + 1)
         trial_elec = trial_dat.sel(channel=channel, sample=trial_time).squeeze(
             "trial"
         )
