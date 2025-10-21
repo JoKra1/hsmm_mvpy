@@ -224,6 +224,7 @@ def read_mne_data(  # noqa: PLR0913  # This should probably be refactored instea
         epoch_data,
         dim=xr.DataArray(subj_name, dims="participant"),
         fill_value={"event": "", "data": np.nan},
+        join='outer',
     )
     n_trials = (
         (~np.isnan(epoch_data.data[:, :, :, 0].data)).sum(axis=1)[:, 0].sum()
