@@ -110,8 +110,6 @@ class Standard:
     ----------
     epoch_data : xr.DataArray
         Input data with dimensions [n_participants * n_epochs * n_samples * n_channels].
-    participants_variable : str, optional
-        Name of the dimension for participant IDs. Default is 'participant'.
     apply_standard : bool, optional
         Whether to standardize variance between participants. Recommended when there are
         few participants (e.g., < 10). Default is False.
@@ -159,7 +157,6 @@ class Standard:
     def __init__(  # noqa  # Might need to be refactored.
         self,
         epoch_data: xr.DataArray,
-        participants_variable: str = 'participant',
         apply_standard: bool = False,
         averaged: bool = False,
         apply_zscore: Union[bool, str, ApplyZScore] = ApplyZScore.TRIAL,
@@ -211,9 +208,9 @@ class Standard:
                 )
             else:
                 mean_std = data.groupby(
-                    participants_variable, squeeze=False).std(dim=...).data.mean()
+                    'participant', squeeze=False).std(dim=...).data.mean()
                 data = data.assign(mean_std=mean_std.data)
-                data = data.groupby(participants_variable, squeeze=False).map(self._standardize)
+                data = data.groupby('participant', squeeze=False).map(self._standardize)
 
         if isinstance(data, xr.Dataset):  # needs to be a dataset if apply_standard is used
             data = data.data
@@ -325,7 +322,7 @@ class Standard:
                         data = data.groupby("participant").map(self.zscore_xarray)
                     else:
                         data = (
-                            data.stack(participant_comp=[participants_variable, "component"])
+                            data.stack(participant_comp=['participant', "component"])
                             .groupby("participant_comp", squeeze=False)
                             .map(self.zscore_xarray)
                             .unstack()
@@ -333,14 +330,14 @@ class Standard:
                 case ApplyZScore.TRIAL:
                     if zscore_across_pcs:
                         data = (
-                            data.stack(trials=[participants_variable, "epoch"])
+                            data.stack(trials=['participant', "epoch"])
                             .groupby("trials")
                             .map(self.zscore_xarray)
                             .unstack()
                         )
                     else:
                         data = (
-                            data.stack(trials=[participants_variable, "epoch", "component"])
+                            data.stack(trials=['participant', "epoch", "component"])
                             .groupby("trials", squeeze=False)
                             .map(self.zscore_xarray)
                             .unstack()
