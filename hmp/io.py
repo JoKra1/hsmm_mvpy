@@ -146,6 +146,8 @@ def read_mne_data(
                     high_pass,
                     low_pass,
                     pick_channels,
+                    tmin,
+                    tmax,
                     verbose)
 
         elif data_format in ['raw', "bids"]:
@@ -217,6 +219,8 @@ def read_mne_data(
         highpass=epochs.info["highpass"],
         reference=reference,
         n_trials=n_trials,
+        tmin=tmin,
+        tmax=tmax,
     )
     return epoch_data
 
@@ -261,6 +265,8 @@ def _read_mne_epochs(
     high_pass,
     low_pass,
     pick_channels,
+    tmin,
+    tmax,
     verbose
 ):
 
@@ -271,7 +277,15 @@ def _read_mne_epochs(
 
     if high_pass is not None or low_pass is not None:
         epochs.filter(high_pass, low_pass, fir_design="firwin", verbose=verbose)
-
+    if tmin > epochs.tmin:
+        epochs.crop(tmin=tmin)
+        if verbose:
+            print(f"Cropping epochs to {tmin}s before centering events")
+    if tmax < epochs.tmax:
+        epochs.crop(tmax=tmax)
+        if verbose:
+            print(f"Cropping epochs to {tmax}s after centering events")
+    
     if sfreq is None:
         sfreq = epochs.info["sfreq"]
     elif sfreq < epochs.info["sfreq"]:
