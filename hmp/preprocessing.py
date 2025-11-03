@@ -143,10 +143,6 @@ class Standard:
         Default is None.
     weights : Optional[xr.DataArray], optional
         Precomputed linear combinations of channels. Default is None.
-    bandfilter : Optional[tuple[float, float]], optional
-        Frequency range for bandpass filtering (lfreq, hfreq). If None, no filtering is applied.
-        Filtering at this step is suboptimal; it is recommended to filter before epoching.
-        Default is None.
     mcca_reg : float, optional
         Regularization parameter for the MCCA computation. Default is 0.
     copy : bool, optional
@@ -174,11 +170,10 @@ class Standard:
         n_comp: Optional[int] = None,
         n_ppcas: Optional[int] = None,
         weights: Optional[xr.DataArray] = None,
-        bandfilter: Optional[Union[tuple[float, float]]] = None,
         mcca_reg: float = 0,
         copy: bool = False,
     ) -> None:
-        offset = epoch_data.offset
+
         if copy is True:
             data = epoch_data.copy(deep=True)
         else:
@@ -206,9 +201,6 @@ class Standard:
             raise ValueError("MCCA cannot be applied to only one participant")
 
         sfreq = data.sfreq
-
-        if bandfilter:
-            data = self._apply_filtering(data, bandfilter, sfreq)
 
         if apply_standard:
             if "participant" not in data.dims or len(data.participant) == 1:
@@ -362,6 +354,7 @@ class Standard:
         self.weights = weights
         self.preprocessing_model = preprocessing_model
 
+    
     @staticmethod
     def _center(data: xr.DataArray) -> xr.DataArray:
         """Center the data."""
@@ -419,36 +412,6 @@ class Standard:
         data = data.stack(
             all_samples=["participant", "epoch", "sample"]).dropna(dim="all_samples")
         return data
-
-    @staticmethod
-    def _apply_filtering(data: xr.DataArray,
-                         bandfilter:Optional[Union[tuple[float, float]]],
-                         sfreq: float):
-        print("""
-        NOTE: filtering at this step is suboptimal, filter before epoching if at all possible,
-        see also https://mne.tools/stable/auto_tutorials/preprocessing/30_filtering_resampling.html
-        """)
-
-        lfreq, hfreq = bandfilter
-        n_participant, n_epochs, _, _ = data.data.values.shape
-        for pp in range(n_participant):
-            for trial in range(n_epochs):
-                dat = data.data.values[pp, trial, :, :]
-
-                if not np.isnan(dat).all():
-                    dat = dat[:, ~np.isnan(dat[0, :])]  # remove nans
-
-                    # pad by reflecting the whole trial twice
-                    trial_len = dat.shape[1] * 2
-                    dat = np.pad(dat, ((0, 0), (trial_len, trial_len)), mode="reflect")
-
-                    # filter
-                    dat = filter_data(dat, sfreq, lfreq, hfreq, verbose=False)
-
-                    # remove padding
-                    dat = dat[:, trial_len:-trial_len]
-                    data.data.values[pp, trial, :, : dat.shape[1]] = dat
-            return data
 
     @staticmethod
     def _standardize(x):
