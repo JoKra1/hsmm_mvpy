@@ -18,6 +18,7 @@ import mne
 import numpy as np
 import xarray as xr
 from pandas import DataFrame
+from numpy.typing import DTypeLike
 
 
 def read_mne_data(
@@ -36,7 +37,8 @@ def read_mne_data(
     low_pass: float | None = None,
     pick_channels: str | list = "eeg",
     reference: str | None = None,
-    bids_parameters: dict = {}
+    bids_parameters: dict = {},
+    dtype: DTypeLike = np.float32
 ) -> xr.Dataset:
     """Read EEG/MEG data format (.fif or .bdf) using MNE's integrated function.
 
@@ -97,6 +99,8 @@ def read_mne_data(
         or provide a list of channel names.
     reference : str, optional
         Reference to use for EEG data. If None, the existing reference is kept.
+    dtype: np.DTypeLike
+        Precision, use np.float32 or np.int64
 
     Returns
     -------
@@ -194,7 +198,7 @@ def read_mne_data(
             print(f"End sampling frequency is {sfreq} Hz")
     
         epoch_data.append(hmp_data_format(
-                epochs.get_data(copy=False),
+                epochs.get_data(copy=False).astype(dtype),
                 epochs.info["sfreq"],
                 None,
                 epochs=[int(x) for x in valid_epoch_index],
