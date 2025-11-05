@@ -1,12 +1,18 @@
 """Builds the data to be used in HMP model estimation."""
 from dataclasses import dataclass
 from functools import cached_property
+from numpy.typing import DTypeLike
 
 import numpy as np
 import xarray as xr
 from scipy.signal import correlate
 
-from hmp.preprocessing import Standard
+from hmp.preprocessing import (
+    Standard,
+    Identity,
+    Arbitrary,
+    MCCA_aligned
+)
 
 
 @dataclass
@@ -32,6 +38,7 @@ class TrialData:
         Offset applied to the data.
     cross_corr : np.ndarray
         Cross-correlation values between the data and a given pattern.
+        
     """
 
     xrdurations: xr.DataArray
@@ -43,8 +50,9 @@ class TrialData:
     offset: int
     cross_corr: np.ndarray
 
+
     @classmethod
-    def from_preprocessed(cls, preprocessed, pattern):
+    def from_preprocessed(cls, preprocessed, pattern, dtype = np.float32):
         """
         Create a TrialData instance from preprocessed data and a given pattern.
 
@@ -54,13 +62,15 @@ class TrialData:
             The preprocessed object or xarray DataArray containing the preprocessed data.
         pattern : np.ndarray
             The pattern to use for cross-correlation computation.
+        dtype: np.DTypeLike
+            Precision, use np.float32 or np.int64
 
         Returns
         -------
         TrialData
             An instance of TrialData with computed durations, cross-correlation, and metadata.
         """
-        if isinstance(preprocessed, Standard):
+        if isinstance(preprocessed, (Standard, Identity, Arbitrary, MCCA_aligned)):
             data = preprocessed.data
         elif 'component' in preprocessed.dims:
             data = preprocessed
@@ -90,7 +100,7 @@ class TrialData:
         n_trials = durations.trial.count().values
         n_samples, n_dims = np.shape(data.data.T)
         # Equation 1 in 2024 paper
-        cross_corr = cross_correlation(data.data.T, n_trials, n_dims, starts, ends, pattern)
+        cross_corr = cross_correlation(data.data.T, n_trials, n_dims, starts, ends, pattern, dtype)
 
         metadata = (data.unstack()
                         .sel(component=0, sample=0).drop_vars(['component', 'sample'])
@@ -120,7 +130,9 @@ def cross_correlation(
     n_dims: int,
     starts: np.ndarray,
     ends: np.ndarray,
-    pattern: np.ndarray
+    pattern: np.ndarray,
+    dtype: DTypeLike,
+
 ) -> np.ndarray:
     """Compute the cross-correlation between the data and a given pattern.
 
@@ -141,6 +153,8 @@ def cross_correlation(
         Array of end indices for each trial.
     pattern : np.ndarray
         1D array representing the pattern to correlate with.
+    dtype: np.DTypeLike
+        Precision, use np.float32 or np.int64
 
     Returns
     -------
@@ -148,7 +162,7 @@ def cross_correlation(
         A 2D ndarray with shape (n_samples, n_components) where each cell contains
         the correlation value with the given pattern.
     """
-    events = np.zeros(data.shape)
+    events = np.zeros(data.shape, dtype=dtype)
     for trial in range(n_trials):  # avoids confusion of gains between trial
         for dim in np.arange(n_dims):
             events[starts[trial] : ends[trial] + 1, dim] = correlate(
