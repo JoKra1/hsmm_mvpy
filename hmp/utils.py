@@ -6,6 +6,142 @@ import numpy as np
 import xarray as xr
 from pandas import MultiIndex
 
+def reject_crop_epochs(epoch_data:xr.Dataset,
+                         sfreq:float,
+                         interval_id:str = 'interval',
+                         offset_after:float = 0,
+                         too_short:float=None,
+                         too_long:float=None,
+                         reject_threshold:float=None,
+                         verbose:bool=True):
+    """
+    Crop each epoch from time 0 of the epoch to its interval with optional rejection criteria.
+
+    For epoch in the `epoch_data` xr.Dataset, this function trims the epoch data from epoch
+    time 0 (e.g. stimulus onset) up to the specified interval (e.g. response), optionally including a
+    fixed offset after the interval.
+    Epochs whose interval exceeds specified lower and upper limits are rejected, and additional rejection
+    can be applied based on signal amplitude thresholds in the interval.
+
+    Parameters
+    ----------
+    data_epoch : xr.Dataset
+        Array of epoched EEG/MEG data, shaped (n_epochs, n_channels, n_samples) from io module.
+        Should include the intervals in `interval_id`
+    interval_id : str
+        varialbe in the `Data variables` of the xr.Dataset to be used for interval crop
+    too_short : float
+        Minimum value of the intervals; epochs with shorter intervals are rejected.
+    too_long : float
+        Maximum value of the intervals; epochs with longer intervals are rejected.
+    reject_threshold : float or None
+        Maximum allowed signal amplitude for an epoch; epochs exceeding this are rejected.
+    verbose : bool
+        If True, print detailed processing steps.
+
+    Returns
+    -------
+    epoch_data : np.ndarray
+        Array of cropped epoch data that passed all criteria.
+    """
+    epoch_data = epoch_data.sel(sample=range(0, int(epoch_data.sample.max())+1))
+    epoch_data = epoch_data.stack(trial=["participant", "epoch"])
+    epoch_data = epoch_data.transpose('trial','channel','sample')
+    rts_arr = epoch_data.coords[interval_id].values.copy()
+    if np.nanmean(rts_arr) > 100:
+        warn(f"Found intervals with an average value of {np.round(np.nanmean(rts_arr),2)}"
+            ", assuming intervals are in milliseconds and converting to seconds")
+        rts_arr /= 1000
+    offset_after_samples = int(np.rint(offset_after * sfreq))
+
+    if too_long is None:
+        too_long = float(epoch_data.sample.max()) / sfreq
+    if too_short is None:
+        too_short = 1 / sfreq
+    if too_long < 0 or too_short < 0:
+        raise ValueError("Limit to intervals cannot be negative")
+
+    rts_arr[rts_arr > too_long] = 0  # removes intervals above x sec
+    rts_arr[rts_arr < too_short] = 0  # removes intervals below x sec, determines max events
+    rt_criteria_rej = len(rts_arr[rts_arr == 0]) 
+    inexistant_rej = len(rts_arr[np.isnan(rts_arr)])
+    rts_arr[np.isnan(rts_arr)] = 0  # rejected during epoching or inexistant
+    # Converting to samples
+    rts_arr = np.rint(rts_arr * sfreq).astype(int)
+    
+    epoch_data = epoch_data.sel(sample=range(0, int(rts_arr.max())+1+offset_after_samples))
+    
+    assert len(rts_arr[rts_arr > 0]) > 0, "No intervals are between the requested limits of "\
+        f"minimum {too_short} and maximum {too_long} seconds"
+
+    min_rt = min(rts_arr[rts_arr > 0])
+    if min_rt < 10:
+        warn(f"The shortest interval is less than 10 samples. "
+             "Consider specifying too short trials using the `too_short` parameter "
+             "or increasing sampling frequency of the signal.")
+
+    if verbose:
+        print(f"{len(rts_arr[rts_arr > 0])} intervals between {too_short} and "\
+            f"{too_long} seconds.")
+    cropped_data_epoch = np.empty(
+        [
+            len(epoch_data),
+            epoch_data.sizes['channel'],
+            max(rts_arr) + offset_after_samples,
+        ], dtype=np.float32
+    )
+    cropped_data_epoch[:] = np.nan
+    cropped_trigger = []
+    trial_coord = []
+    j = 0
+    if reject_threshold is None:
+        reject_threshold = np.inf
+    rej = 0
+    time0 = np.argmin(np.abs(epoch_data.sample.values))
+    for i in range(len(epoch_data.data)):
+        if rts_arr[i] > 0:
+            # Crops the epochs to time 0 (stim onset) up to RT
+            if (
+                np.abs(epoch_data.values[i, :, time0 : time0 + rts_arr[i] + offset_after_samples])
+                < reject_threshold
+            ).all():
+                cropped_data_epoch[j, :, : rts_arr[i] + offset_after_samples] = epoch_data.values[
+                    i, :, time0 : time0 + rts_arr[i] + offset_after_samples
+                ]
+                j += 1
+                trial_coord.append(epoch_data.trial[i].values)
+            else:
+                rej += 1
+                rts_arr[i] = 0
+    assert rej < len(cropped_data_epoch), 'All trials rejected, inspect intervals and rejection criterion'
+    if verbose:
+        print(f"Rejection summary: \n {rej} trials rejected based on threshold of {reject_threshold}"
+         f"\n {rt_criteria_rej} trials rejected based on interval limit of {too_short, too_long}"
+         f"\n {inexistant_rej} trials detected as inexisting (e.g. preprocessing prior to HMP) ")
+
+    while np.isnan(cropped_data_epoch[-1]).all():  # Remove excluded epochs based on rejection
+        cropped_data_epoch = cropped_data_epoch[:-1]
+
+    cropped_data_epoch = xr.DataArray(
+        data=cropped_data_epoch,
+        dims=("trial", "channel", "sample"),
+        attrs={
+              "offset":offset_after_samples}
+    )
+    trial_coord = [tuple(arr.tolist()) for arr in trial_coord]
+    updated_coords = dict(epoch_data.sel(trial=trial_coord).drop_vars('sample').coords)
+    cropped_data_epoch = cropped_data_epoch.assign_coords(updated_coords)
+
+    return cropped_data_epoch.unstack()
+
+def zscore_xarray(data: xr.DataArray) -> xr.DataArray:
+        """Zscore of the data in an xarray, avoiding any nans."""
+        non_nan_mask = ~np.isnan(data.values)
+        if non_nan_mask.any():  # if not everything is nan, calc zscore
+            data.values[non_nan_mask] = (
+                data.values[non_nan_mask] - data.values[non_nan_mask].mean()
+            ) / data.values[non_nan_mask].std()
+        return data
 
 def stack_data(data):
     """Stack the data.
@@ -199,9 +335,8 @@ def event_channels(
     common_trial = np.intersect1d(
         estimated["trial"].values, epoch_data["trial"].values
     )
-    epoch_data = epoch_data.sel(trial=common_trial)
+    epoch_data = epoch_data.sel(trial=common_trial, sample=estimated.sample)
     estimated = estimated.sel(trial=common_trial)
-
     n_events = estimated.event.count().values
     n_trial = estimated.trial.count().values
     n_channel = epoch_data.channel.count().values
@@ -210,7 +345,7 @@ def event_channels(
         normed_template = template / np.sum(template)
 
     times = event_times(estimated, mean=False, estimate_method=estimate_method,)
-
+    times = times.sel(trial=common_trial)
     event_values = np.zeros((n_channel, n_trial, n_events))*np.nan
     for ev in range(n_events):
         for tr in range(n_trial):
