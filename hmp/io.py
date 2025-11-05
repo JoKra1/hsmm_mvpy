@@ -145,7 +145,7 @@ def read_mne_data(
     for participant in pfiles:
         print(f"Processing participant {participant}'s {data_format} {pick_channels}")
         if data_format == 'epochs':
-            epochs = _read_mne_epochs(participant,
+            epochs, tmin, tmax = _read_mne_epochs(participant,
                     sfreq,
                     high_pass,
                     low_pass,
@@ -200,6 +200,8 @@ def read_mne_data(
         epoch_data.append(hmp_data_format(
                 epochs.get_data(copy=False).astype(dtype),
                 epochs.info["sfreq"],
+                epochs.tmin,
+                epochs.tmax,
                 None,
                 epochs=[int(x) for x in valid_epoch_index],
                 channel=epochs.ch_names,
@@ -285,11 +287,13 @@ def _read_mne_epochs(
         epochs.crop(tmin=tmin)
         if verbose:
             print(f"Cropping epochs to {tmin}s before centering events")
+    else: tmin = epochs.tmin
     if tmax < epochs.tmax:
         epochs.crop(tmax=tmax)
         if verbose:
             print(f"Cropping epochs to {tmax}s after centering events")
-    
+    else:
+        tmax = epochs.tmax
     if sfreq is None:
         sfreq = epochs.info["sfreq"]
     elif sfreq < epochs.info["sfreq"]:
@@ -297,7 +301,7 @@ def _read_mne_epochs(
             print(f"Resampling data at {sfreq}")
         epochs = epochs.resample(sfreq)
     epochs = epochs.pick(pick_channels)
-    return epochs
+    return epochs, tmin, tmax
 
 
 def read_raw_and_epoch(  # noqa # Should probably be refactored.
@@ -431,6 +435,8 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
 def hmp_data_format(
     data: np.ndarray,
     sfreq: float,
+    tmin: float,
+    tmax: float,
     events: np.ndarray | None = None,
     participants: list | None = None,
     epochs: list | None = None,
@@ -481,7 +487,9 @@ def hmp_data_format(
             {
                 "data": (["epoch", "channel", "sample"], data),
             },
-            coords={"epoch": epochs, "channel": channel, "sample": np.arange(n_samples)},
+            coords={"epoch": epochs, "channel": channel, 
+                    "sample": np.linspace(np.rint(tmin*sfreq),
+                        np.rint(tmax*sfreq), n_samples, dtype=int)},
             attrs={"sfreq": sfreq},
         )
     else:
@@ -493,7 +501,8 @@ def hmp_data_format(
                 "participant": participants,
                 "epoch": epochs,
                 "channel": channel,
-                "sample": np.arange(n_samples),
+                "sample": np.linspace(int(np.rint(tmin*sfreq)),
+                                      int(np.rint(tmax*sfreq)), n_samples),
             },
             attrs={"sfreq": sfreq},
         )
