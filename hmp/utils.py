@@ -110,9 +110,10 @@ def reject_crop_epochs(epoch_data:xr.Dataset,
                 ]
                 j += 1
                 trial_coord.append(epoch_data.trial[i].values)
-            else:
+            elif ~np.isnan(epoch_data.values[i, 0, time0]):
                 rej += 1
-                rts_arr[i] = 0
+            else: # assumes rejected before
+                inexistant_rej += 1
     assert rej < len(cropped_data_epoch), 'All trials rejected, inspect intervals and rejection criterion'
     if verbose:
         print(f"Rejection summary: \n {rej} trials rejected based on threshold of {reject_threshold}"
