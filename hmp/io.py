@@ -281,8 +281,19 @@ def _read_mne_epochs(
     else:
         raise ValueError("Incorrect file format")
 
+    # Filtering
     if high_pass is not None or low_pass is not None:
         epochs.filter(high_pass, low_pass, fir_design="firwin", verbose=verbose)
+
+    # Resampling
+    if sfreq is None:
+        sfreq = epochs.info["sfreq"]
+    elif sfreq < epochs.info["sfreq"]:
+        if verbose:
+            print(f"Resampling data at {sfreq}")
+        epochs = epochs.resample(sfreq)
+
+    # Cropping
     if tmin > epochs.tmin:
         epochs.crop(tmin=tmin)
         if verbose:
@@ -294,12 +305,6 @@ def _read_mne_epochs(
             print(f"Cropping epochs to {tmax}s after centering events")
     else:
         tmax = epochs.tmax
-    if sfreq is None:
-        sfreq = epochs.info["sfreq"]
-    elif sfreq < epochs.info["sfreq"]:
-        if verbose:
-            print(f"Resampling data at {sfreq}")
-        epochs = epochs.resample(sfreq)
     epochs = epochs.pick(pick_channels)
     return epochs, tmin, tmax
 
