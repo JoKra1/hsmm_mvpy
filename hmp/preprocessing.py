@@ -123,7 +123,6 @@ class BasePreprocessing(ABC):
         self.apply_zscore = apply_zscore
         self.centering = centering
         self.copy = copy
-        self.verbose = verbose
     
     def common_preprocess(self, epoch_data) -> xr.DataArray:
         self.sfreq = epoch_data.sfreq
@@ -139,16 +138,20 @@ class BasePreprocessing(ABC):
 
         if self.centering:
             data = self.center_data(data)
-            
-        data = reject_crop_epochs(data,
-            self.sfreq,
-            interval_id=self.interval_id,
-            offset_after=self.offset_after,
-            too_short=self.too_short,
-            too_long=self.too_long,
-            reject_threshold=self.reject_threshold,
-            verbose=self.verbose
-        )
+
+        if self.interval_id is not None:
+            data = reject_crop_epochs(data,
+                self.sfreq,
+                interval_id=self.interval_id,
+                offset_after=self.offset_after,
+                too_short=self.too_short,
+                too_long=self.too_long,
+                reject_threshold=self.reject_threshold,
+                verbose=self.verbose
+            )
+        else:
+            data = data.sel(sample = range(int(data.sample.max())))
+            warn('No intervals provided, fitting HMP on the whole epoch duration from centering event')
         if isinstance(data, xr.Dataset):
             data = data.data
         if np.isnan(data.groupby("participant").mean(["epoch", "sample"]).values).any():
@@ -179,10 +182,8 @@ class BasePreprocessing(ABC):
         match self.apply_zscore:
             case ApplyZScore.ALL:
                 return (
-                    data.stack(comp=["component"])
-                    .groupby("comp", squeeze=False)
+                    data.groupby("component", squeeze=False)
                     .map(zscore_xarray)
-                    .unstack()
                 )
             case ApplyZScore.PARTICIPANT:
                 return (
@@ -291,7 +292,7 @@ class Standard(BasePreprocessing):
                 ],
                 axis=0,
             )
-        pca_ready_data = np.mean(np.array(indiv_data), axis=0)
+        pca_ready_data = np.mean(indiv_data, axis=0)
         # Performing spatial PCA on the average var-cov matrix
 
         if self.n_comp is None:
@@ -339,7 +340,7 @@ class Standard(BasePreprocessing):
 
     @staticmethod
     def _pca(pca_ready_data: xr.DataArray, n_comp: int, channel) -> xr.DataArray:
-        pca = PCA(n_components=n_comp, svd_solver="full")  # selecting Principale components (PC)
+        pca = PCA(n_components=n_comp, svd_solver="full", copy=False)  # selecting Principale components (PC)
         pca.fit(pca_ready_data)
         # Rebuilding pca PCs as xarray to ease computation
         coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))
