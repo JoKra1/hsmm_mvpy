@@ -6,7 +6,7 @@ from numpy.typing import DTypeLike
 import numpy as np
 import xarray as xr
 from scipy.signal import correlate
-from hmp.preprocessing import _check_preprocessed
+from hmp.utils import _check_preprocessed
 
 @dataclass
 class TrialData:

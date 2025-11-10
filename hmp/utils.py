@@ -5,7 +5,17 @@ from warnings import warn
 import numpy as np
 import xarray as xr
 from pandas import MultiIndex
-from hmp.preprocessing import _check_preprocessed
+from hmp.transformers.base import BaseTransformer
+
+def _check_preprocessed(preprocessed):
+    if isinstance(preprocessed, BaseTransformer):
+        data = preprocessed.data
+    elif 'component' in preprocessed.dims:
+        data = preprocessed
+    else:
+        raise ValueError("preprocessed must be an hmp preprocessed object suing a class"
+                             "in hmp.transformers")
+    return data
 
 def stack_data(data):
     """Stack the data.
