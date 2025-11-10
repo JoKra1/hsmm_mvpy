@@ -21,7 +21,6 @@ MCCA_aligned
     Per-subject PCA re-aligned into a new common space
 """
 
-from enum import Enum
 from typing import Optional, Union, Any
 from warnings import warn
 from abc import ABC, abstractmethod
@@ -32,45 +31,17 @@ import numpy as np
 import xarray as xr
 from sklearn.decomposition import PCA
 from hmp import mcca
-from hmp.utils import reject_crop_epochs, zscore_xarray
 
-class ApplyZScore(Enum):
-    """Enum for different settings on applying the z-score.
-
-    Possible values: [ALL, PARTICIPANT, TRIAL, DONT_APPLY]
-    """
-
-    ALL = 'all'
-    PARTICIPANT = 'participant'
-    TRIAL = 'trial'
-    DONT_APPLY = 'dont_apply'
-
-    def __str__(self) -> str:
-        return self.value
-
-    def __bool__(self) -> bool:
-        return self != self.DONT_APPLY
-
-    @classmethod
-    def parse(cls, label):
-        if isinstance(label, str):
-            label = label.lower()
-
-        if isinstance(label, cls):
-            return label
-        elif label in (False, None, 'dont_apply'):
-            return cls.DONT_APPLY
-        elif label in ('trial', True):
-            return cls.TRIAL
-        elif label == 'participant':
-            return cls.PARTICIPANT
-        elif label == 'all':
-            return cls.ALL
-        else:
-            raise KeyError(f"Unknown value for apply_zscore: '{label}'; "
-            f"valid options: [{', '.join([e.value for e in cls])}] or Bool (True defaults to {cls.TRIAL})")
-
-
+def _check_preprocessed(preprocessed):
+    if isinstance(preprocessed, (Standard, Identity, Arbitrary, MCCA_aligned)):
+        data = preprocessed.data
+    elif 'component' in preprocessed.dims:
+        data = preprocessed
+    else:
+        raise ValueError("preprocessed must be an hmp preprocessed object obtained using"
+                             " hmp.preprocessing")
+    return data
+    
 class BasePreprocessing(ABC):
     """Base class for HMP preprocessing pipelines.
 
@@ -91,11 +62,19 @@ class BasePreprocessing(ABC):
     standardize(x)
         Standardize participant data by scaling to group-level mean variance.
 
-    zscoring(data)
-        Apply z-scoring based on the configured mode (all, participant, trial).
-
+    reject_crop_epochs(data)
+        Crop each epoch from time 0 of the epoch to its interval with optional rejection criteria.
+    
+        For epoch in the `epoch_data` xr.Dataset, this function trims the epoch data from epoch
+        time 0 (e.g. stimulus onset) up to the specified interval (e.g. response), optionally including a
+        fixed offset after the interval.
+        Epochs whose interval exceeds specified lower and upper limits are rejected, and additional rejection
+        can be applied based on signal amplitude thresholds in the interval.
+        
+    
     data_format(data, weights, preprocessing_model, ori_coords, sfreq, offset)
         Finalize the transformation by formatting and stacking the data.
+
     """
 
     def __init__(
@@ -107,12 +86,11 @@ class BasePreprocessing(ABC):
             reject_threshold: Optional[float],
             verbose: bool,
             apply_standard: bool,
-            apply_zscore: Union[bool, str, ApplyZScore],
+            apply_zscore:bool,
             centering: bool,
             copy: bool,
 
     ):
-        apply_zscore = ApplyZScore.parse(apply_zscore)        
         self.interval_id = interval_id
         self.offset_after = offset_after
         self.too_short = too_short
@@ -126,80 +104,109 @@ class BasePreprocessing(ABC):
     
     def common_preprocess(self, epoch_data) -> xr.DataArray:
         self.sfreq = epoch_data.sfreq
-        data = epoch_data.data.copy(deep=True) if self.copy else epoch_data.data
+        data = epoch_data.data.copy(deep=self.copy) if self.copy else epoch_data.data
 
         if self.apply_standard:
-            if "participant" not in data.dims or len(data.participant) == 1:
-                warn("Standardization requested but participant dimension is missing or singular.")
-            else:
-                mean_std = data.groupby('participant').std(dim="channel").data.mean()
-                data = data.assign(mean_std=mean_std.data)
-                data = data.groupby('participant').map(self.standardize)
-
-        if self.centering:
-            data = self.center_data(data)
+            mean_std = data.std(dim=..., skipna=True) 
+            data /= data.std(['epoch','sample','channel'], skipna=True)
+            data *= mean_std
 
         if self.interval_id is not None:
-            data = reject_crop_epochs(data,
-                self.sfreq,
-                interval_id=self.interval_id,
-                offset_after=self.offset_after,
-                too_short=self.too_short,
-                too_long=self.too_long,
-                reject_threshold=self.reject_threshold,
-                verbose=self.verbose
-            )
+            data = self.reject_crop_epochs(data)
         else:
-            data = data.sel(sample = range(int(data.sample.max())))
+            # removes baseline
+            data = data.sel(sample = range(int(data.sample.max()))+1).stack(trial=["participant", "epoch"])
+            data = data.transpose("trial", "channel", "sample")
             warn('No intervals provided, fitting HMP on the whole epoch duration from centering event')
-        if isinstance(data, xr.Dataset):
-            data = data.data
-        if np.isnan(data.groupby("participant").mean(["epoch", "sample"]).values).any():
-            raise ValueError("At least one participant has an empty channel")
+            if self.reject_threshold is not np.inf or self.reject_threshold is not None:
+                warn("No rejection threshold can be applied for epoched data with no intervals provided")
+        if self.centering:
+            data -= data.mean(['sample'])
+        return data.dropna("trial", how="all")
 
-        data = data.transpose("participant", "epoch", "channel", "sample")
-        return data
+    def reject_crop_epochs(self, epoch_data:xr.Dataset):
+        """
+        Crop each epoch from time 0 of the epoch to its interval with optional rejection criteria.
     
-    @staticmethod
-    def center_data(data: xr.DataArray) -> xr.DataArray:
-        """Center the data."""
-        mean_last_dim = np.mean(data.values, axis=-1)
-        mean_last_dim_expanded = np.expand_dims(mean_last_dim, axis=-1)
-        centred = data.values - mean_last_dim_expanded
-        data.values = centred
-        return data
+        For epoch in the `epoch_data` xr.Dataset, this function trims the epoch data from epoch
+        time 0 (e.g. stimulus onset) up to the specified interval (e.g. response), optionally including a
+        fixed offset after the interval.
+        Epochs whose interval exceeds specified lower and upper limits are rejected, and additional rejection
+        can be applied based on signal amplitude thresholds in the interval.
     
-    @staticmethod
-    def standardize(x):
-        """Scaling variances to mean variance of the group."""
-        return (x.data / x.data.std(dim=...)) * x.mean_std
-
-    def zscoring(self, data: xr.DataArray) -> xr.DataArray:
-        """Apply z-scoring based on configuration."""
-        if not self.apply_zscore:
-            return data
     
-        match self.apply_zscore:
-            case ApplyZScore.ALL:
-                return (
-                    data.groupby("component", squeeze=False)
-                    .map(zscore_xarray)
-                )
-            case ApplyZScore.PARTICIPANT:
-                return (
-                    data.stack(participant_comp=["participant", "component"])
-                    .groupby("participant_comp", squeeze=False)
-                    .map(zscore_xarray)
-                    .unstack()
-                )
-            case ApplyZScore.TRIAL:
-                return (
-                    data.stack(trials=["participant", "epoch", "component"])
-                    .groupby("trials", squeeze=False)
-                    .map(zscore_xarray)
-                    .unstack()
-                )
-        return data
+        Returns
+        -------
+        epoch_data : np.ndarray
+            Array of cropped epoch data that passed all criteria.
+        """
+        sfreq=self.sfreq
+        too_short = self.too_short
+        too_long = self.too_long        
+        epoch_data = epoch_data.stack(trial=["participant", "epoch"])
+        epoch_data = epoch_data.transpose('trial','channel','sample')
+        rts_arr = epoch_data.coords[self.interval_id].values.copy()
+        max_rt = np.nanmax(rts_arr)
+        if max_rt > 500:
+            warn(f"Found intervals with a max value value of {np.round(max_rt,2)}"
+                ", assuming intervals are in milliseconds and converting to seconds")
+            rts_arr /= 1000
+        offset_after_samples = int(np.rint(self.offset_after * sfreq))
+    
+        if too_long is None:
+            too_long = int(epoch_data.sample.max()) - offset_after_samples
+        if too_short is None:
+            too_short = 1 / sfreq
+        if too_long < 0 or too_short < 0 or too_long < too_short:
+            raise ValueError("Limit to intervals cannot be negative")
+    
+        rts_arr[rts_arr > too_long] = 0  # removes intervals above x sec
+        rts_arr[rts_arr < too_short] = 0  # removes intervals below x sec, determines max events
+        rt_criteria_rej = len(rts_arr[rts_arr == 0]) 
+        inexistant_rej = len(rts_arr[np.isnan(rts_arr)])
+        rts_arr[np.isnan(rts_arr)] = 0  # rejected during epoching or inexistant
+        # Converting to samples
+        rts_arr = np.rint(rts_arr * sfreq).astype(int)
+        
+        epoch_data = epoch_data.sel(sample=range(0, int(rts_arr.max()+offset_after_samples+1)))
+        assert len(rts_arr[rts_arr > 0]) > 0, "No intervals are between the requested limits of "\
+            f"minimum {too_short} and maximum {too_long} seconds"
+    
+        min_rt = min(rts_arr[rts_arr > 0])
+        if min_rt < 10:
+            warn(f"The shortest interval is less than 10 samples. "
+                 "Consider specifying too short trials using the `too_short` parameter "
+                 "or increasing sampling frequency of the signal.")
+    
+        if self.verbose:
+            print(f"{len(rts_arr[rts_arr > 0])} intervals between {too_short} and "\
+                f"{too_long} seconds.")
+        rej = 0
+        time0 = np.argmin(np.abs(epoch_data.sample.values))
+        for i in range(len(epoch_data.data)):
+            if rts_arr[i] > 0:
+                # Crops the epochs to time 0 (stim onset) up to RT
+                if (
+                    np.abs(epoch_data.values[i, :, time0 : time0 + rts_arr[i] + offset_after_samples])
+                    < (self.reject_threshold or np.inf)
+                ).all():
+                    epoch_data.values[i, :, time0 + rts_arr[i] + offset_after_samples:] = np.nan
+                elif ~np.isnan(epoch_data.values[i, 0, time0]):
+                    epoch_data.values[i, :, :] = np.nan
+                    rej += 1
+                else: # assumes rejected before
+                    epoch_data.values[i, :, :] = np.nan
+                    inexistant_rej += 1
+            else:
+                epoch_data.values[i, :, :] = np.nan
+    
+        assert rej < len(epoch_data), 'All trials rejected, inspect intervals and rejection criterion'
+        if self.verbose:
+            print(f"Rejection summary: \n {rej} trials rejected based on threshold of {self.reject_threshold}"
+             f"\n {rt_criteria_rej} trials rejected based on interval limit of {too_short, too_long}"
+             f"\n {inexistant_rej} trials detected with no interval (e.g. rejection prior to HMP) ")
+        epoch_data = epoch_data[~np.isnan(epoch_data.isel(sample=0, channel=0).values)]
+        return epoch_data
 
     def data_format(
         self,
@@ -208,11 +215,12 @@ class BasePreprocessing(ABC):
         preprocessing_model: Any,
     ) -> xr.DataArray:
         """Finalize the transformation: transpose, reassign coords, stack, and store attributes."""
-        data = data.transpose("participant", "epoch", "sample", "component")
         data.attrs["sfreq"] = self.sfreq
-        data.attrs["offset"] = self.offset_after * self.sfreq
-        self.data = data.stack(
-            all_samples=["participant", "epoch", "sample"]).dropna(dim="all_samples")
+        data.attrs["offset"] = self.offset_after
+        if self.apply_zscore:
+            data -= data.mean(['sample'], skipna=True)
+            data /= data.std(['sample'], skipna=True)
+        self.data = data
         self.weights = weights
         self.preprocessing_model = preprocessing_model
         return self.data
@@ -238,10 +246,10 @@ class Standard(BasePreprocessing):
         Threshold for rejecting noisy epochs.
     apply_standard : bool
         Whether to standardize variance across participants.
-    apply_zscore : Union[bool, str, ApplyZScore]
-        Z-scoring mode: 'all', 'participant', 'trial', or 'dont_apply'.
+    apply_zscore :bool
+        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
     centering : bool
-        Whether to center the data across the last dimension.
+        Whether to center the data across the last dimension before projection
     copy : bool
         Whether to copy the data before preprocessing.
     verbose : bool
@@ -259,8 +267,8 @@ class Standard(BasePreprocessing):
         too_long: Optional[float] = None,
         reject_threshold: Optional[float] = None,
         apply_standard: bool = False,
-        apply_zscore: Union[bool, str, ApplyZScore] = ApplyZScore.PARTICIPANT,
-        centering: bool = False,
+        apply_zscore: bool = True,
+        centering: bool = True,
         copy: bool = False,
         verbose: bool = True,
         n_comp: Optional[int] = None,
@@ -277,23 +285,20 @@ class Standard(BasePreprocessing):
             centering=centering,
             copy=copy,
         )
+        
         self.n_comp = n_comp
         data = self.common_preprocess(epoch_data)
-        indiv_data = np.zeros(
-            (data.sizes["participant"], data.sizes["channel"], data.sizes["channel"])
-        )
-        for i in range(data.sizes["participant"]):
-            x_i = np.squeeze(data.data[i])
-            indiv_data[i] = np.mean(
-                [
-                    np.cov(x_i[trial, :, ~np.isnan(x_i[trial, 0, :])].T)
-                    for trial in range(x_i.shape[0])
-                    if ~np.isnan(x_i[trial, 0, :]).all()
-                ],
-                axis=0,
-            )
-        pca_ready_data = np.mean(indiv_data, axis=0)
+        
         # Performing spatial PCA on the average var-cov matrix
+        pca_ready_data = np.zeros((data.sizes["channel"], data.sizes["channel"]), dtype=data.dtype)
+        count = 0
+        for i in range(data.sizes["trial"]):
+            x_i = np.squeeze(data.isel(trial=i).values)
+            mask = ~np.isnan(x_i[0, :])
+            cov_i = np.cov(x_i[:, mask], rowvar=True)
+            pca_ready_data += cov_i
+            count += 1
+        pca_ready_data /= count
 
         if self.n_comp is None:
             self.n_comp = self.user_input_n_comp(data=pca_ready_data)
@@ -301,12 +306,9 @@ class Standard(BasePreprocessing):
         weights, preprocessing_model = self._pca(pca_ready_data, self.n_comp,
                                                  data.coords["channel"].values)
         data = data @ weights
-        data = self.zscoring(data)
         self.data = self.data_format(
             data, weights, preprocessing_model
         )
-        self.weights = weights
-        self.preprocessing_model = preprocessing_model
 
     @staticmethod
     def user_input_n_comp(data):
@@ -369,10 +371,10 @@ class Identity(BasePreprocessing):
         Threshold for rejecting noisy epochs.
     apply_standard : bool
         Whether to standardize variance across participants.
-    apply_zscore : Union[bool, str, ApplyZScore]
-        Z-scoring mode: 'all', 'participant', 'trial', or 'dont_apply'.
+    apply_zscore :bool
+        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
     centering : bool
-        Whether to center the data across the last dimension.
+        Whether to center the data across the last dimension before projection
     copy : bool
         Whether to copy the data before preprocessing.
     verbose : bool
@@ -388,7 +390,7 @@ class Identity(BasePreprocessing):
         too_long: Optional[float] = None,
         reject_threshold: Optional[float] = None,
         apply_standard: bool = False,
-        apply_zscore: Union[bool, str, ApplyZScore] = False,
+        apply_zscore: bool = False,
         centering: bool = False,
         copy: bool = False,
         verbose: bool = True,
@@ -419,7 +421,6 @@ class Identity(BasePreprocessing):
         preprocessing_model = None
 
         # Final formatting
-        data = self.zscoring(data)
         self.data = self.data_format(
             data, weights, preprocessing_model
         )
@@ -447,10 +448,10 @@ class Arbitrary(BasePreprocessing):
         Threshold for rejecting noisy epochs.
     apply_standard : bool
         Whether to standardize variance across participants.
-    apply_zscore : Union[bool, str, ApplyZScore]
-        Z-scoring mode: 'all', 'participant', 'trial', or 'dont_apply'.
+    apply_zscore :bool
+        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
     centering : bool
-        Whether to center the data across the last dimension.
+        Whether to center the data across the last dimension before projection
     copy : bool
         Whether to copy the data before preprocessing.
     verbose : bool
@@ -469,8 +470,8 @@ class Arbitrary(BasePreprocessing):
         too_long: Optional[float] = None,
         reject_threshold: Optional[float] = None,
         apply_standard: bool = False,
-        apply_zscore: Union[bool, str, ApplyZScore] = ApplyZScore.PARTICIPANT,
-        centering: bool = False,
+        apply_zscore: bool = True,
+        centering: bool = True,
         copy: bool = False,
         verbose: bool = True,
     ):
@@ -494,7 +495,6 @@ class Arbitrary(BasePreprocessing):
         preprocessing_model = 'custom'
 
         # Final formatting
-        data = self.zscoring(data)
         self.data = self.data_format(
             data, weights, preprocessing_model
         )
@@ -525,10 +525,10 @@ class MCCA_aligned(BasePreprocessing):
         Threshold for rejecting noisy epochs.
     apply_standard : bool
         Whether to standardize variance across participants.
-    apply_zscore : Union[bool, str, ApplyZScore]
-        Z-scoring mode: 'all', 'participant', 'trial', or 'dont_apply'.
+    apply_zscore :bool
+        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
     centering : bool
-        Whether to center the data across the last dimension.
+        Whether to center the data across the last dimension before projection
     copy : bool
         Whether to copy the data before preprocessing.
     verbose : bool
@@ -556,7 +556,7 @@ class MCCA_aligned(BasePreprocessing):
         too_long: Optional[float] = None,
         reject_threshold: Optional[float] = None,
         apply_standard: bool = False,
-        apply_zscore: Union[bool, str, ApplyZScore] = ApplyZScore.PARTICIPANT,
+        apply_zscore: bool = True,
         centering: bool = True,
         copy: bool = False,
         verbose: bool = True,
@@ -579,7 +579,7 @@ class MCCA_aligned(BasePreprocessing):
         )
         warn('The use of MCCA is experimental, not yet meant for inference')
         # Preprocessing
-        data = self.common_preprocess(epoch_data)
+        data = self.common_preprocess(epoch_data).unstack()
         ori_coords = data.drop_vars("channel").coords
 
         # Projection
@@ -631,7 +631,6 @@ class MCCA_aligned(BasePreprocessing):
         preprocessing_model = mcca_m
 
         # Final formatting
-        data = self.zscoring(data)
         self.data = self.data_format(
             data, weights, preprocessing_model
         )
