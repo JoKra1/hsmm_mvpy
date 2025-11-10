@@ -88,27 +88,36 @@ class ProjPCA(BaseTransformer):
         pca_ready_data /= count
         pca_ready_data 
         if self.n_comp is None:
-            self.n_comp = self.user_input_n_comp(data=pca_ready_data)
+            self.n_comp = self.user_input_n_comp(pca_ready_data,  data.sizes["channel"], data.coords["channel"].values)
 
-        weights = self._pca(pca_ready_data, self.n_comp,
-                                                 data.coords["channel"].values)
+        weights, _ = self._pca(pca_ready_data, self.n_comp,
+                            data.coords["channel"].values)
         data = data @ weights
         self.data = self.data_format(
             data, weights
         )
 
-    @staticmethod
-    def user_input_n_comp(data):
+    def _pca(self, pca_ready_data: xr.DataArray, n_comp: int, channel) -> xr.DataArray:
+        # Mostly from https://github.com/coffeine-labs/coffeine/blob/main/coffeine/spatial_filters.py
+        eigvals, eigvecs = eigh(pca_ready_data)
+        ix = np.argsort(np.abs(eigvals))[::-1]
+        evecs = eigvecs[:, ix]
+        evecs = evecs[:, :n_comp]
+        # Rebuilding as xarray to ease computation
+        coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))
+        pca_weights = xr.DataArray(evecs, dims=("channel", "component"), coords=coords)
+        return pca_weights, eigvals[ix]
+
+    def user_input_n_comp(self, data, n_comp, channels):
 
         n_comp = np.shape(data)[0] - 1
         fig, ax = plt.subplots(1, 2, figsize=(0.2 * n_comp, 4))
-        pca = PCA(n_components=n_comp, svd_solver="full", copy=False)  # selecting PCs
-        pca.fit(data)
-
-        ax[0].plot(np.arange(pca.n_components) + 1, pca.explained_variance_ratio_, ".-")
+        pca, eigenvalues = self._pca(data, n_comp, channels)
+        explained_variance_ratio = eigenvalues/np.sum(eigenvalues)
+        ax[0].plot(explained_variance_ratio, ".-")
         ax[0].set_ylabel("Normalized explained variance")
         ax[0].set_xlabel("Component")
-        ax[1].plot(np.arange(pca.n_components) + 1, np.cumsum(pca.explained_variance_ratio_), ".-")
+        ax[1].plot(np.cumsum(explained_variance_ratio), ".-")
         ax[1].set_ylabel("Cumulative normalized explained variance")
         ax[1].set_xlabel("Component")
         plt.tight_layout()
@@ -118,23 +127,11 @@ class ProjPCA(BaseTransformer):
         n_comp = int(
             input(
                 f"How many PCs (95 and 99% explained variance at component "
-                f"n{np.where(np.cumsum(pca.explained_variance_ratio_) >= 0.95)[0][0] + 1} and "
-                f"n{np.where(np.cumsum(pca.explained_variance_ratio_) >= 0.99)[0][0] + 1}; "
-                f"components till n{np.where(pca.explained_variance_ratio_ >= 0.01)[0][-1] + 1} "
+                f"n{np.where(np.cumsum(explained_variance_ratio) >= 0.95)[0][0] + 1} and "
+                f"n{np.where(np.cumsum(explained_variance_ratio) >= 0.99)[0][0] + 1}; "
+                f"components till n{np.where(explained_variance_ratio >= 0.01)[0][-1] + 1} "
                 f"explain at least 1%)?"
             )
         )
 
         return n_comp
-
-    @staticmethod
-    def _pca(pca_ready_data: xr.DataArray, n_comp: int, channel) -> xr.DataArray:
-        # Mostly from https://github.com/coffeine-labs/coffeine/blob/main/coffeine/spatial_filters.py
-        eigvals, eigvecs = eigh(pca_ready_data)
-        ix = np.argsort(np.abs(eigvals))[::-1]
-        evecs = eigvecs[:, ix]
-        evecs = evecs[:, :n_comp]
-        # Rebuilding as xarray to ease computation
-        coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))
-        pca_weights = xr.DataArray(evecs, dims=("channel", "component"), coords=coords)
-        return pca_weights
