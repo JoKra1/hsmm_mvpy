@@ -6,14 +6,7 @@ from numpy.typing import DTypeLike
 import numpy as np
 import xarray as xr
 from scipy.signal import correlate
-
-from hmp.preprocessing import (
-    Standard,
-    Identity,
-    Arbitrary,
-    MCCA_aligned
-)
-
+from hmp.preprocessing import _check_preprocessed
 
 @dataclass
 class TrialData:
@@ -70,18 +63,11 @@ class TrialData:
         TrialData
             An instance of TrialData with computed durations, cross-correlation, and metadata.
         """
-        if isinstance(preprocessed, (Standard, Identity, Arbitrary, MCCA_aligned)):
-            data = preprocessed.data
-        elif 'component' in preprocessed.dims:
-            data = preprocessed
-        else:
-            raise ValueError("preprocessed must be an hmp preprocessed object obtained using"
-                             " hmp.preprocessing")
+        data = _check_preprocessed(preprocessed)
         # compute sequence durations based on number of samples
         durations = (
-            data.unstack()
+            data
             .sel(component=0).drop_vars('component')
-            .stack(trial=["participant", "epoch"])
             .dropna(dim="trial", how="all")
             .groupby("trial")
             .count(dim="sample")
@@ -96,21 +82,19 @@ class TrialData:
         xrdurations = durations.dropna("trial") - durations.dropna(
             "trial"
         ).shift(trial=1, fill_value=0)
-
+        
         n_trials = durations.trial.count().values
-        n_samples, n_dims = np.shape(data.data.T)
-        # Equation 1 in 2024 paper
-        cross_corr = cross_correlation(data.data.T, n_trials, n_dims, starts, ends, pattern, dtype)
-
-        metadata = (data.unstack()
-                        .sel(component=0, sample=0).drop_vars(['component', 'sample'])
-                        .stack(trial=["participant", "epoch"])
-                        .dropna(dim="trial", how="all")
-                   )
+        metadata = (data.sel(component=0, sample=0).sel().drop_vars(['component', 'sample']))
         metadata = {k: v for k, v in metadata.coords.items() if k not in metadata.dims}
         for name, coord in metadata.items():
             if name not in xrdurations.coords:
                 xrdurations = xrdurations.assign_coords({name: coord})
+        data = data.unstack().stack(all_samples=['participant','epoch','sample']).dropna(dim="all_samples")
+        n_dims, n_samples = data.shape
+        # Equation 1 in 2024 paper
+        cross_corr = cross_correlation(data.values.T, n_trials, n_dims, starts, ends, pattern, dtype)
+
+
 
         return cls(xrdurations=xrdurations, starts=starts, ends=ends,
                    n_trials=n_trials, n_samples=n_samples, cross_corr=cross_corr,
