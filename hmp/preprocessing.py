@@ -31,6 +31,7 @@ import numpy as np
 import xarray as xr
 from sklearn.decomposition import PCA
 from hmp import mcca
+from scipy.linalg import eigh
 
 def _check_preprocessed(preprocessed):
     if isinstance(preprocessed, (Standard, Identity, Arbitrary, MCCA_aligned)):
@@ -115,7 +116,7 @@ class BasePreprocessing(ABC):
             data = self.reject_crop_epochs(data)
         else:
             # removes baseline
-            data = data.sel(sample = range(int(data.sample.max()))+1).stack(trial=["participant", "epoch"])
+            data = data.sel(sample = range(int(data.sample.max())+1)).stack(trial=["participant", "epoch"])
             data = data.transpose("trial", "channel", "sample")
             warn('No intervals provided, fitting HMP on the whole epoch duration from centering event')
             if self.reject_threshold is not np.inf or self.reject_threshold is not None:
@@ -294,11 +295,13 @@ class Standard(BasePreprocessing):
         for i in range(data.sizes["trial"]):
             x_i = np.squeeze(data.isel(trial=i).values)
             mask = ~np.isnan(x_i[0, :])
-            cov_i = np.cov(x_i[:, mask], rowvar=True)
+            cov_i = x_i[:, mask] @ x_i[:, mask].T
+            # Regularization
+            cov_i += 1e-15 * np.eye(data.sizes["channel"])
             pca_ready_data += cov_i
             count += 1
         pca_ready_data /= count
-
+        pca_ready_data 
         if self.n_comp is None:
             self.n_comp = self.user_input_n_comp(data=pca_ready_data)
 
@@ -341,12 +344,17 @@ class Standard(BasePreprocessing):
 
     @staticmethod
     def _pca(pca_ready_data: xr.DataArray, n_comp: int, channel) -> xr.DataArray:
-        pca = PCA(n_components=n_comp, svd_solver="full", copy=False)  # selecting Principale components (PC)
-        pca.fit(pca_ready_data)
-        # Rebuilding pca PCs as xarray to ease computation
+        # Mostly from https://github.com/coffeine-labs/coffeine/blob/main/coffeine/spatial_filters.py
+        eigvals, eigvecs = eigh(pca_ready_data)
+        ix = np.argsort(np.abs(eigvals))[::-1]
+        evecs = eigvecs[:, ix]
+        evecs = evecs[:, :n_comp]
+        # Rebuilding as xarray to ease computation
         coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))
-        pca_weights = xr.DataArray(pca.components_.T, dims=("channel", "component"), coords=coords)
-        return pca_weights, pca
+        pca_weights = xr.DataArray(evecs, dims=("channel", "component"), coords=coords)
+        eigvals = xr.DataArray(eigvals, dims=("component"), name='eigenvalues',
+                               coords=dict(component=("component", np.arange(len(channel)))))
+        return pca_weights, eigvals
 
 
 class Identity(BasePreprocessing):
@@ -628,7 +636,6 @@ class MCCA_aligned(BasePreprocessing):
         data = data.assign_coords(ori_coords)
         weights = mcca_m.mcca_weights
         preprocessing_model = mcca_m
-
         # Final formatting
         self.data = self.data_format(
             data, weights, preprocessing_model
