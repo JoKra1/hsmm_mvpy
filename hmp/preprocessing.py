@@ -5,17 +5,17 @@ These provide methods to:
     1 Trim the trials data from epoch time 0 (e.g. stimulus onset) up to the specified interval (e.g. response), optionally including a fixed offset after the interval.
     2. Optionally standardize variance across subjects and center the data
     3. Epochs whose interval exceeds specified lower and upper interval limits (`too_short` and `too_long` are rejected, additional rejection can be applied based on signal amplitude thresholds in the interval with `reject_threshold`
-    4. Project channels to new virtual channel, using the different classes, either based on a PCA (`Standard`), arbitrary linear combination of channels (`Arbitrary`) or the identity of the channels (`Identity`)
+    4. Project channels to new virtual channel, using the different classes, either based on a PCA (`ProjPCA`), arbitrary linear combination of channels (`ProjArbitrary`) or the identity of the channels (`ProjIdentity`)
     5. zscore the data for different levels depending on the dataset
 
 
 Classes
 -------
-Standard
+ProjPCA
     Project channels into principal component space based on the covariance matrix among electrodes
-Arbitrary
+ProjArbitrary
     Apply a user-defined linear combination of original channels to a new set of virtual channels
-Identity
+ProjIdentity
     Returns the channels in the same space
 """
 
@@ -31,7 +31,7 @@ from sklearn.decomposition import PCA
 from scipy.linalg import eigh
 
 def _check_preprocessed(preprocessed):
-    if isinstance(preprocessed, (Standard, Identity, Arbitrary)):
+    if isinstance(preprocessed, (ProjPCA, ProjIdentity, ProjArbitrary)):
         data = preprocessed.data
     elif 'component' in preprocessed.dims:
         data = preprocessed
@@ -58,7 +58,7 @@ class BasePreprocessing(ABC):
         Stack data from [participant, epoch, sample, component] to [all_samples, component].
 
     standardize(x)
-        Standardize participant data by scaling to group-level mean variance.
+        S tandardize participant data by scaling to group-level mean variance.
 
     reject_crop_epochs(data)
         Crop each epoch from time 0 of the epoch to its interval with optional rejection criteria.
@@ -222,7 +222,7 @@ class BasePreprocessing(ABC):
         self.preprocessing_model = preprocessing_model
         return self.data
         
-class Standard(BasePreprocessing):
+class ProjPCA(BasePreprocessing):
     """Transforms epoched data using a PCA for HMP analysis.
 
     Project channels to principal components space. The PCA is performed on subject-averaged covariance matrix among electrodes. The number of PC is either declared at initialization or a plot opens with a prompt to select based on the scree plot of the PCA.
@@ -354,8 +354,8 @@ class Standard(BasePreprocessing):
         return pca_weights, eigvals
 
 
-class Identity(BasePreprocessing):
-    """Transforms epoched data using a the Identity matrix for HMP analysis.
+class ProjIdentity(BasePreprocessing):
+    """Transforms epoched data using a the ProjIdentity matrix for HMP analysis.
 
     Returns electrode values after performing transformation steps without the projection. For consistency the channel dimension is renamed 'component'
     
@@ -411,7 +411,7 @@ class Identity(BasePreprocessing):
             centering=centering,
             copy=copy,
         )
-        warn('Identity projection might pose problems of dimensionality'
+        warn('ProjIdentity projection might pose problems of dimensionality'
              'and collinearity of channels. Thus rendering HMP estimation'
              'difficult, use with care!')
 
@@ -431,10 +431,10 @@ class Identity(BasePreprocessing):
         self.weights = weights
         self.preprocessing_model = preprocessing_model
         
-class Arbitrary(BasePreprocessing):
+class ProjArbitrary(BasePreprocessing):
     """Transforms epoched data using a a custom linear combination for HMP analysis.
 
-    Projects channels into a custom space given by a n_chan x n_component matrix. See xample matrix when applying `Standard` class.
+    Projects channels into a custom space given by a n_chan x n_component matrix. See example matrix when applying `ProjPCA` class.
     
     Parameters
     ----------
