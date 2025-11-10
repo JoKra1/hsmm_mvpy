@@ -154,12 +154,11 @@ class BasePreprocessing(ABC):
         offset_after_samples = int(np.rint(self.offset_after * sfreq))
     
         if too_long is None:
-            too_long = int(epoch_data.sample.max()) - offset_after_samples
+            too_long = (int(epoch_data.sample.max()) - offset_after_samples)/sfreq
         if too_short is None:
             too_short = 1 / sfreq
         if too_long < 0 or too_short < 0 or too_long < too_short:
             raise ValueError("Limit to intervals cannot be negative")
-    
         rts_arr[rts_arr > too_long] = 0  # removes intervals above x sec
         rts_arr[rts_arr < too_short] = 0  # removes intervals below x sec, determines max events
         rt_criteria_rej = len(rts_arr[rts_arr == 0]) 
