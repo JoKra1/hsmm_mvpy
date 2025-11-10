@@ -7,13 +7,13 @@ import xarray as xr
 from pandas import MultiIndex
 from hmp.transformers.base import BaseTransformer
 
-def _check_preprocessed(preprocessed):
-    if isinstance(preprocessed, BaseTransformer):
-        data = preprocessed.data
-    elif 'component' in preprocessed.dims:
-        data = preprocessed
+def _check_transformed(transformed):
+    if isinstance(transformed, BaseTransformer):
+        data = transformed.data
+    elif 'component' in transformed.dims:
+        data = transformed
     else:
-        raise ValueError("preprocessed must be an hmp preprocessed object suing a class"
+        raise ValueError("transformed must be an hmp transformed object suing a class"
                              "in hmp.transformers")
     return data
 
@@ -409,19 +409,19 @@ def centered_activity(
     return centered_data.assign_coords(trial_x_part)
 
 
-def condition_selection(preprocessed, condition_string, variable="event", method="equal"):
-    """Select a subset from preprocessed_data.
+def condition_selection(transformed, condition_string, variable="event", method="equal"):
+    """Select a subset from transformed_data.
 
     The function selects epochs for which 'condition_string' is in 'variable' based on 'method'.
 
     Parameters
     ----------
-    preprocessed : xr.Dataset
+    transformed : xr.Dataset
         transformed EEG data for hmp from the hmp.preprocessing classes
     condition_string : str | num
         condition indicator for selection
     variable : str
-        variable present in preprocessed.data that is used for condition selection
+        variable present in transformed.data that is used for condition selection
     method : str
         'equal' selects equal trial, 'contains' selects trial in which conditions_string
         appears in variable
@@ -429,9 +429,9 @@ def condition_selection(preprocessed, condition_string, variable="event", method
     Returns
     -------
     data : xr.Dataset
-        Subset of preprocessed_data.
+        Subset of transformed_data.
     """
-    data = _check_preprocessed(preprocessed).unstack()
+    data = _check_transformed(transformed).unstack()
     data[variable] = data[variable].fillna("")
     if method == "equal":
         data = data.where(data[variable] == condition_string, drop=True)
@@ -454,7 +454,7 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     condition_string : str | num
         condition indicator for selection
     variable : str
-        variable present in preprocessed_data that is used for condition selection
+        variable present in transformed_data that is used for condition selection
     method : str
         'equal' selects equal trial, 'contains' selects trial in which conditions_string
         appears in variable
@@ -462,7 +462,7 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     Returns
     -------
     data : xr.Dataset
-        Subset of preprocessed_data.
+        Subset of transformed_data.
     """
     if len(epoch_data.dims) == 4:
         stacked_epoch_data = epoch_data.stack(trial=("participant", "epoch")).dropna(
@@ -480,12 +480,12 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     return stacked_epoch_data.unstack()
 
 
-def participant_selection(preprocessed_data, participant):
-    """Select a participant from preprocessed_data.
+def participant_selection(transformed_data, participant):
+    """Select a participant from transformed_data.
 
     Parameters
     ----------
-    preprocessed_data : xr.Dataset
+    transformed_data : xr.Dataset
         transformed EEG data for hmp, from utils.transform_data
     participant : str | num
         Name of the participant
@@ -493,8 +493,8 @@ def participant_selection(preprocessed_data, participant):
     Returns
     -------
     data : xr.Dataset
-        Subset of preprocessed_data.
+        Subset of transformed_data.
     """
-    unstacked = preprocessed_data.unstack().sel(participant=participant)
+    unstacked = transformed_data.unstack().sel(participant=participant)
     stacked = stack_data(unstacked)
     return stacked

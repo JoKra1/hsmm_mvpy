@@ -6,7 +6,7 @@ from numpy.typing import DTypeLike
 import numpy as np
 import xarray as xr
 from scipy.signal import correlate
-from hmp.utils import _check_preprocessed
+from hmp.utils import _check_transformed
 
 @dataclass
 class TrialData:
@@ -45,14 +45,14 @@ class TrialData:
 
 
     @classmethod
-    def from_preprocessed(cls, preprocessed, pattern, dtype = np.float32):
+    def from_transformer(cls, transformed, pattern, dtype = np.float32):
         """
-        Create a TrialData instance from preprocessed data and a given pattern.
+        Create a TrialData instance from transformed data and a given pattern.
 
         Parameters
         ----------
-        preprocessed : Preprocessing or xr.DataArray
-            The preprocessed object or xarray DataArray containing the preprocessed data.
+        transformed : BaseTransfromer or xr.DataArray
+            The transformed object or xarray DataArray containing the transformed data.
         pattern : np.ndarray
             The pattern to use for cross-correlation computation.
         dtype: np.DTypeLike
@@ -63,7 +63,7 @@ class TrialData:
         TrialData
             An instance of TrialData with computed durations, cross-correlation, and metadata.
         """
-        data = _check_preprocessed(preprocessed)
+        data = _check_transformed(transformed)
         # compute sequence durations based on number of samples
         durations = (
             data
