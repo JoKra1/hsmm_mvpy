@@ -5,7 +5,7 @@ These provide methods to:
     1 Trim the trials data from epoch time 0 (e.g. stimulus onset) up to the specified interval (e.g. response), optionally including a fixed offset after the interval.
     2. Optionally standardize variance across subjects and center the data
     3. Epochs whose interval exceeds specified lower and upper interval limits (`too_short` and `too_long` are rejected, additional rejection can be applied based on signal amplitude thresholds in the interval with `reject_threshold`
-    4. Project channels to new virtual channel, using the different classes, either based on a PCA (`Standard`), MCCA (`MCCA_aligned`), arbitrary linear combination of channels (`Arbitrary`) or the identity of the channels (`Identity`)
+    4. Project channels to new virtual channel, using the different classes, either based on a PCA (`Standard`), arbitrary linear combination of channels (`Arbitrary`) or the identity of the channels (`Identity`)
     5. zscore the data for different levels depending on the dataset
 
 
@@ -17,8 +17,6 @@ Arbitrary
     Apply a user-defined linear combination of original channels to a new set of virtual channels
 Identity
     Returns the channels in the same space
-MCCA_aligned
-    Per-subject PCA re-aligned into a new common space
 """
 
 from typing import Optional, Union, Any
@@ -30,11 +28,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from sklearn.decomposition import PCA
-from hmp import mcca
 from scipy.linalg import eigh
 
 def _check_preprocessed(preprocessed):
-    if isinstance(preprocessed, (Standard, Identity, Arbitrary, MCCA_aligned)):
+    if isinstance(preprocessed, (Standard, Identity, Arbitrary)):
         data = preprocessed.data
     elif 'component' in preprocessed.dims:
         data = preprocessed
@@ -501,141 +498,6 @@ class Arbitrary(BasePreprocessing):
         data = data @ weights
         preprocessing_model = 'custom'
 
-        # Final formatting
-        self.data = self.data_format(
-            data, weights, preprocessing_model
-        )
-        self.weights = weights
-        self.preprocessing_model = preprocessing_model
-
-
-class MCCA_aligned(BasePreprocessing):
-    """Transforms epoched data using MCCA for HMP analysis.
-
-    Applies a PCA per subject and align the components across the PCAs using MCCA.
-    
-    Parameters
-    ----------
-    epoch_data : xr.Dataset
-        Input EEG data with dimensions [participant, epoch, sample, channel], from `io` module
-    n_comp : int, optional
-        Number of components to retain in the final MCCA space.
-    interval_id: str
-        Name of the variable that contains the per-trial intervals in the epoch_data used for cropping.
-    offset_after : float
-        Time offset after interval start for cropping.
-    too_short : float, optional
-        Minimum duration threshold for keeping epochs.
-    too_long : float, optional
-        Maximum duration threshold for keeping epochs.
-    reject_threshold : float, optional
-        Threshold for rejecting noisy epochs.
-    apply_standard : bool
-        Whether to standardize variance across participants.
-    apply_zscore :bool
-        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
-    centering : bool
-        Whether to center the data across the last dimension before projection
-    copy : bool
-        Whether to copy the data before preprocessing.
-    verbose : bool
-        Whether to print rejection/cropping details.
-    cov : bool, optional
-        Whether to apply PCA/MCCA to the variance-covariance matrix (True)
-        or the epoched data (False).
-    averaged : bool, optional
-        Whether to apply MCCA on the averaged ERP (True) or single-trial ERP (False).
-        Only applicable for the MCCA method when cov=False. Default is False.
-    n_ppcas : int, optional
-        For the MCCA method, controls the number of components retained for by-participant PCAs.  If None (default), n_ppcas * 3 is choosen
-        Default is None.
-    mcca_reg : float, optional
-        Regularization parameter for the MCCA computation. Default is 0.
-    """
-    
-    def __init__(
-        self,
-        epoch_data: xr.Dataset,
-        n_comp: int,
-        interval_id: str = 'rt',
-        offset_after: float = 0,
-        too_short: Optional[float] = None,
-        too_long: Optional[float] = None,
-        reject_threshold: Optional[float] = None,
-        apply_standard: bool = False,
-        apply_zscore: bool = True,
-        centering: bool = True,
-        copy: bool = False,
-        verbose: bool = True,
-        cov: bool = False,
-        averaged: bool = True,
-        n_ppcas: int = None,
-        mcca_reg: float = 0
-    ):
-        super().__init__(
-            interval_id=interval_id,
-            offset_after=offset_after,
-            too_short=too_short,
-            too_long=too_long,
-            reject_threshold=reject_threshold,
-            verbose=verbose,
-            apply_standard=apply_standard,
-            apply_zscore=apply_zscore,
-            centering=centering,
-            copy=copy,
-        )
-        warn('The use of MCCA is experimental, not yet meant for inference')
-        # Preprocessing
-        data = self.common_preprocess(epoch_data).unstack()
-        ori_coords = data.drop_vars("channel").coords
-
-        # Projection
-        if data.sizes["participant"] == 1:
-            raise ValueError("MCCA cannot be applied to only one participant")
-
-        if n_ppcas is None:
-            n_ppcas = n_comp * 3
-        mcca_m = mcca.MCCA(n_components_pca=n_ppcas, n_components_mcca=n_comp, r=mcca_reg)
-        if cov:
-            fitted_data = data.transpose("participant", "epoch", "sample", "channel").data
-            ccs = mcca_m.obtain_mcca_cov(fitted_data)
-        else:
-            if averaged:
-                fitted_data = (
-                    data.mean("epoch").transpose("participant", "sample", "channel").data
-                )
-            else:
-                fitted_data = (
-                    data.stack({"all": ["epoch", "sample"]})
-                    .transpose("participant", "all", "channel")
-                    .data
-                )
-            ccs = mcca_m.obtain_mcca(fitted_data)
-        trans_ccs = np.tile(
-            np.nan,
-            (data.sizes["participant"],
-             data.sizes["epoch"],
-             data.sizes["sample"],
-             ccs.shape[-1]),
-        )
-        for i, part in enumerate(data.participant):
-            trans_ccs[i] = mcca_m.transform_trials(
-                data.sel(participant=part).transpose(
-                    "epoch", "sample", "channel").data.copy()
-            )
-        data = xr.DataArray(
-            trans_ccs,
-            dims=["participant", "epoch", "sample", "component"],
-            coords=dict(
-                participant=data.participant,
-                epoch=data.epoch,
-                sample=data.sample,
-                component=np.arange(n_comp),
-            ),  # n_comp
-        )
-        data = data.assign_coords(ori_coords)
-        weights = mcca_m.mcca_weights
-        preprocessing_model = mcca_m
         # Final formatting
         self.data = self.data_format(
             data, weights, preprocessing_model
