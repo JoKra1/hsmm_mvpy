@@ -17,34 +17,6 @@ def _check_transformed(transformed):
                              "in hmp.transformers")
     return data
 
-def stack_data(data):
-    """Stack the data.
-
-    Going from format [participant * epochs * sample * channel] to
-    [sample * channel] with sample indexes starts and ends to delimitate the epochs.
-
-
-    Parameters
-    ----------
-    data : xarray
-        unstacked xarray data from transform_data() or anyother source yielding an xarray with
-        dimensions [participant * epochs * sample * channel]
-    subjects_variable : str
-        name of the dimension for subjects ID
-
-    Returns
-    -------
-    data : xarray.Dataset
-        xarray dataset [sample * channel]
-    """
-    if isinstance(data, (xr.DataArray, xr.Dataset)) and "component" not in data.dims:
-        data = data.rename_dims({"channel": "component"})
-    if "participant" not in data.dims:
-        data = data.expand_dims("participant")
-    data = data.stack(all_samples=["participant", "epoch", "sample"]).dropna(dim="all_samples")
-    return data
-
-
 def event_times(  # noqa: PLR0912
     estimates,
     duration=False,
@@ -450,7 +422,7 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     Parameters
     ----------
     epoch_data : xr.Dataset
-        transformed EEG data for hmp, e.g. from utils.read_mne_data()
+        Epoched EEG data for hmp
     condition_string : str | num
         condition indicator for selection
     variable : str
@@ -480,13 +452,13 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     return stacked_epoch_data.unstack()
 
 
-def participant_selection(transformed_data, participant):
+def participant_selection(transformed, participant):
     """Select a participant from transformed_data.
 
     Parameters
     ----------
-    transformed_data : xr.Dataset
-        transformed EEG data for hmp, from utils.transform_data
+    transformed : xr.Dataset or hmp.transformers
+        transformed EEG data for hmp
     participant : str | num
         Name of the participant
 
@@ -495,6 +467,8 @@ def participant_selection(transformed_data, participant):
     data : xr.Dataset
         Subset of transformed_data.
     """
-    unstacked = transformed_data.unstack().sel(participant=participant)
-    stacked = stack_data(unstacked)
-    return stacked
+    data = _check_transformed(transformed).unstack()
+    data = data.sel(participant=participant, drop=False)
+    if 'participant' not in data.dims:
+        data = data.expand_dims('participant')
+    return data.stack(trial=['participant','epoch'])
