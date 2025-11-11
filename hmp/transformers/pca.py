@@ -33,7 +33,7 @@ class ProjPCA(BaseTransformer):
         Whether to standardize variance across participants.
     whiten :bool
         Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
-    centering : bool
+    center : bool
         Whether to center the data across the last dimension before projection
     copy : bool
         Whether to copy the data before preprocessing.
@@ -53,7 +53,7 @@ class ProjPCA(BaseTransformer):
         reject_threshold: Optional[float] = None,
         common_variance: bool = False,
         whiten: bool = True,
-        centering: bool = True,
+        center: bool = True,
         copy: bool = False,
         verbose: bool = True,
         n_comp: Optional[int] = None,
@@ -67,7 +67,7 @@ class ProjPCA(BaseTransformer):
             verbose=verbose,
             common_variance=common_variance,
             whiten=whiten,
-            centering=centering,
+            center=center,
             copy=copy,
         )
         
@@ -80,7 +80,7 @@ class ProjPCA(BaseTransformer):
         for i in range(data.sizes["trial"]):
             x_i = np.squeeze(data.isel(trial=i).values)
             x_i = x_i[:, ~np.isnan(x_i[0, :])]
-            if not self.centering: #ensure cov computation
+            if not self.center: #ensure cov computation
                 x_i -= np.mean(x_i) 
             cov_i = x_i @ x_i.T
             # Regularization
