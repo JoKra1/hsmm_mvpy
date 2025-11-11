@@ -47,7 +47,7 @@ keywords = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "ruff"]
 docs = [
     "sphinx<9.0.0", "sphinx-rtd-theme", "sphinxcontrib-napoleon","nbsphinx",
     "sphinx-autodoc-typehints", "sphinx_inline_tabs", "sphinx_copybutton",
@@ -63,11 +63,11 @@ packages = ["hmp"]
 obsoletes = ["hsmm_mvpy"]
 
 [tool.setuptools_scm]
-write_to = "hmp/_version.py"
+version_file = "hmp/_version.py"
 
 
 [tool.ruff]
-exclude = ["_version.py", "experimental.py"]
+exclude = ["_version.py", "experimental.py", "loocv.py"]
 line-length = 100
 lint.select = ["E", "F", "W", "I", "N", "D", "PL", "ARG"]
 lint.ignore = ["PLR2004", "D107", "D105", "D102"]

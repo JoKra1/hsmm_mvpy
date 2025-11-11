@@ -1,4 +1,4 @@
-"""Method to estimate all possible number events starting from a base model or the maximum possible."""
+"""Estimate all possible number events starting from a base model or the maximum possible."""
 
 import gc
 
@@ -10,13 +10,6 @@ from hmp.models.base import BaseModel
 from hmp.models.event import EventModel
 from hmp.trialdata import TrialData
 
-
-try:
-    __IPYTHON__
-    from tqdm.notebook import tqdm
-except NameError:
-    from tqdm import tqdm
-
 default_colors = ["cornflowerblue", "indianred", "orange", "darkblue", "darkgreen", "gold", "brown"]
 
 
@@ -26,19 +19,19 @@ class EliminativeMethod(BaseModel):
     Parameters
     ----------
     max_events : int, optional
-        Maximum number of events to be estimated. By default, it is inferred using 
-        `compute_max_events()` if not provided. 
+        Maximum number of events to be estimated. By default, it is inferred using
+        `compute_max_events()` if not provided.
     min_events : int, optional
         The minimum number of events to be estimated. Defaults to 1.
     base_fit : EventModel, optional
-        To start the elimination from a specfic model this argument can 
+        To start the elimination from a specfic model this argument can
         be provided with a fitted EventModel. Defaults to None.
     tolerance : float, optional
         Tolerance for the expectation maximization algorithm. Defaults to 1e-4.
     max_iteration : int, optional
         Maximum number of iterations for the expectation maximization algorithm. Defaults to 1000.
     """
-    
+
     def __init__(
         self,
         *args,
@@ -64,8 +57,9 @@ class EliminativeMethod(BaseModel):
     ) -> None:
         """Perform the eliminative estimation.
 
-        First, read or estimate the max_event solution, then estimate the max_event - 1 solution 
-        by iteratively removing one of the events and picking the one with the highest log-likelihood.
+        First, read or estimate the max_event solution, then estimate the max_event - 1 solution
+        by iteratively removing one of the events and picking the one with the highest
+        log-likelihood.
 
         Parameters
         ----------
@@ -78,14 +72,13 @@ class EliminativeMethod(BaseModel):
         -------
         None
         """
-
         if self.max_events is None:
             max_events = self.compute_max_events(trial_data)
         else:
             max_events = self.max_events
 
         min_events = self.min_events
-        
+
         if not self.base_fit:
             print(
                 f"Estimating all solutions for maximal number of events ({max_events})"

@@ -1,13 +1,10 @@
 """Functions to transform the input data and the estimates."""
 
-from warnings import filterwarnings, warn
+from warnings import warn
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 from pandas import MultiIndex
-
-from hmp import mcca
 
 
 def stack_data(data):
@@ -38,7 +35,7 @@ def stack_data(data):
     return data
 
 
-def event_times(
+def event_times(  # noqa: PLR0912
     estimates,
     duration=False,
     mean=False,
@@ -85,7 +82,7 @@ def event_times(
     """
     assert not (mean and errorbars is not None), "Only one of mean and errorbars can be set."
     tstep = 1000 / estimates.sfreq if as_time else 1
-    
+
     if estimate_method is None:
         estimate_method = "max"
     event_shift = 0
@@ -100,7 +97,7 @@ def event_times(
     )  # take average to make sure it's not just 0 on the trial-group
     for c, e in np.argwhere(times_group == -event_shift):
         times[times["group"] == c, e] = np.nan
-    
+
     if add_rt:
         rts = estimates.cumsum('sample').argmax('sample').max('event')+1
         if remove_offset:
@@ -110,7 +107,7 @@ def event_times(
         rts = rts.expand_dims(dim="event")
         times = xr.concat([times, rts], dim="event")
 
-    times = times * tstep     
+    times = times * tstep
     if duration:  # taking into account missing events, hence the ugly code
         added = xr.DataArray(
             np.repeat(0, len(times.trial))[np.newaxis, :],
@@ -199,20 +196,21 @@ def event_channels(
         .drop_duplicates("trial")
     )
 
-    n_events = estimated.event.count().values
-    n_trial = estimated.trial.count().values
-    n_channel = epoch_data.channel.count().values
-
     common_trial = np.intersect1d(
         estimated["trial"].values, epoch_data["trial"].values
     )
     epoch_data = epoch_data.sel(trial=common_trial)
     estimated = estimated.sel(trial=common_trial)
+
+    n_events = estimated.event.count().values
+    n_trial = estimated.trial.count().values
+    n_channel = epoch_data.channel.count().values
+
     if not peak:
         normed_template = template / np.sum(template)
 
     times = event_times(estimated, mean=False, estimate_method=estimate_method,)
-    
+
     event_values = np.zeros((n_channel, n_trial, n_events))*np.nan
     for ev in range(n_events):
         for tr in range(n_trial):
@@ -254,12 +252,10 @@ def centered_activity(
     channel,
     event,
     n_samples=None,
-    center=True,
     cut_after_event=0,
     baseline=0,
     cut_before_event=0,
     event_width=0,
-    impute=None,
 ):
     """Parse the single trial signal of channel in a given number of sample around one event.
 
@@ -298,8 +294,7 @@ def centered_activity(
         event_width = 0
     if cut_before_event == 0:  # avoids searching before stim onset
         cut_before_event = event
-    if 'epoch' in data.dims:
-        data = data.stack({'trial':['participant','epoch']}).data
+
     if n_samples is None:
         if cut_after_event is None:
             raise ValueError(
@@ -309,82 +304,88 @@ def centered_activity(
         n_samples = (
             max(times.sel(event=event + cut_after_event).data - times.sel(event=event).data) + 1
         )
-    if impute is None:
-        impute = np.nan
-    if center:
-        centered_data = np.tile(
-            impute,
-            (len(data.trial), len(channel), int(round(n_samples - baseline + 1))),
-        )
-    else:
-        centered_data = np.tile(
-            impute, (len(data.trial), len(channel), len(data.sample))
-        )
 
-    i = 0
-    trial_times = np.zeros(len(data.trial)) * np.nan
-    valid_indices = list(times.groupby("trial", squeeze=False).groups.keys())
-    for trial, trial_dat in data.groupby("trial", squeeze=False):
-        if trial in valid_indices:
-            if cut_before_event > 0:
-                # Lower lim is baseline or the last sample of the previous event
-                lower_lim = np.max(
-                    [
-                        -np.max(
-                            [
-                                times.sel(event=event, trial=trial)
-                                - times.sel(
-                                    event=event - cut_before_event, trial=trial
-                                )
-                                - event_width // 2,
-                                0,
-                            ]
-                        ),
-                        baseline,
-                    ]
-                )
-            else:
-                lower_lim = 0
-            if cut_after_event > 0:
-                upper_lim = np.max(
-                    [
-                        np.min(
-                            [
-                                times.sel(event=event + cut_after_event, trial=trial)
-                                - times.sel(event=event, trial=trial)
-                                - event_width // 2,
-                                n_samples,
-                            ]
-                        ),
-                        0,
-                    ]
-                )
-            else:
-                upper_lim = n_samples
+    n_samples = np.rint(n_samples)
+    baseline = np.rint(baseline)
 
-            # Determine sample in the signal to store
-            start_idx = int(times.sel(event=event, trial=trial) + lower_lim)
-            end_idx = int(times.sel(event=event, trial=trial) + upper_lim)
-            trial_time = slice(start_idx, end_idx)
-            trial_time_idx = slice(start_idx, end_idx + 1)
-            trial_elec = trial_dat.sel(channel=channel, sample=trial_time).squeeze(
-                "trial"
+    if 'epoch' in data.dims:
+        data = (
+            data.stack({'trial':['participant','epoch']})
+            .data
+            .drop_duplicates("trial")
+        )
+    common_trial = np.intersect1d(
+        times["trial"].values, data["trial"].values
+    )
+    data = data.sel(trial=common_trial)
+    times = times.sel(trial=common_trial)
+
+    assert ~np.any(times > data.sample.max()),\
+        "At least one trial is longer than the maximum possible sample.\
+        Provided times should be in sample not on the millisecond scale"
+
+    centered_data = np.tile(
+        np.nan,
+        (len(common_trial), len(channel), int(round(n_samples - baseline + 1))),
+    )
+
+    trial_times = np.zeros(len(common_trial)) * np.nan
+    participants = []
+    epochs = np.zeros(len(common_trial))
+    for i, (trial, trial_dat) in enumerate(data.groupby("trial", squeeze=False)):
+        participants.append(trial[0])
+        epochs[i] = trial[1]
+        if cut_before_event > 0:
+            # Lower lim is baseline or the last sample of the previous event
+            lower_lim = np.max(
+                [
+                    -np.max(
+                        [
+                            times.sel(event=event, trial=trial)
+                            - times.sel(
+                                event=event - cut_before_event, trial=trial
+                            )
+                            - event_width // 2,
+                            0,
+                        ]
+                    ),
+                    baseline,
+                ]
             )
-            # If center, adjust to always center on the same sample if lower_lim < baseline
-            baseline_adjusted_start = int(abs(baseline - lower_lim))
-            baseline_adjusted_end = baseline_adjusted_start + trial_elec.shape[-1]
-            trial_time_arr = slice(baseline_adjusted_start, baseline_adjusted_end)
+        else:
+            lower_lim = 0
+        if cut_after_event > 0:
+            upper_lim = np.max(
+                [
+                    np.min(
+                        [
+                            times.sel(event=event + cut_after_event, trial=trial)
+                            - times.sel(event=event, trial=trial)
+                            - event_width // 2,
+                            n_samples,
+                        ]
+                    ),
+                    0,
+                ]
+            )
+        else:
+            upper_lim = n_samples
 
-            if center:
-                centered_data[i, :, trial_time_arr] = trial_elec
-            else:
-                centered_data[i, :, trial_time_idx] = trial_elec
-            trial_times[i] = times.sel(event=event, trial=trial)
-            i += 1
+        # Determine sample in the signal to store
+        start_idx = int(times.sel(event=event, trial=trial) + lower_lim)
+        end_idx = int(times.sel(event=event, trial=trial) + upper_lim)
+        trial_elec = trial_dat.sel(channel=channel, sample=slice(start_idx, end_idx))\
+            .squeeze("trial")
+        # If center, adjust to always center on the same sample if lower_lim < baseline
+        baseline_adjusted_start = int(abs(baseline - lower_lim))
+        baseline_adjusted_end = baseline_adjusted_start + trial_elec.shape[-1]
+        trial_time_arr = slice(baseline_adjusted_start, baseline_adjusted_end)
 
-    part, trial = data.coords["participant"].values, data.coords["epoch"].values
+        centered_data[i, :, trial_time_arr] = trial_elec
+        trial_times[i] = times.sel(event=event, trial=trial)
+
     trial_x_part = xr.Coordinates.from_pandas_multiindex(
-        MultiIndex.from_arrays([part, trial], names=("participant", "epoch")),
+        MultiIndex.from_arrays([participants, epochs], names=("participant", "epoch")),
         "trial",
     )
     centered_data = xr.Dataset(
