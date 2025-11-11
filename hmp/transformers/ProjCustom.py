@@ -29,11 +29,11 @@ class ProjCustom(BaseTransformer):
         Maximum duration threshold for keeping epochs.
     reject_threshold : float, optional
         Threshold for rejecting noisy epochs.
-    apply_standard : bool
+    common_variance : bool
         Whether to standardize variance across participants.
-    apply_zscore :bool
+    whiten :bool
         Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
-    centering : bool
+    center : bool
         Whether to center the data across the last dimension before projection
     copy : bool
         Whether to copy the data before transforming.
@@ -50,9 +50,9 @@ class ProjCustom(BaseTransformer):
         too_short: Optional[float] = None,
         too_long: Optional[float] = None,
         reject_threshold: Optional[float] = None,
-        apply_standard: bool = False,
-        apply_zscore: bool = True,
-        centering: bool = True,
+        common_variance: bool = False,
+        whiten: bool = True,
+        center: bool = True,
         copy: bool = False,
         verbose: bool = True,
     ):
@@ -63,9 +63,9 @@ class ProjCustom(BaseTransformer):
             too_long=too_long,
             reject_threshold=reject_threshold,
             verbose=verbose,
-            apply_standard=apply_standard,
-            apply_zscore=apply_zscore,
-            centering=centering,
+            common_variance=common_variance,
+            whiten=whiten,
+            center=center,
             copy=copy,
         )
         # Preprocessing

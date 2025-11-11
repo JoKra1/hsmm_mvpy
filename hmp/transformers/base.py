@@ -6,7 +6,7 @@ These provide methods to:
     2. Optionally standardize variance across subjects and center the data
     3. Epochs whose interval exceeds specified lower and upper interval limits (`too_short` and `too_long` are rejected, additional rejection can be applied based on signal amplitude thresholds in the interval with `reject_threshold`
     4. Project channels to new virtual channel, using the different classes, either based on a PCA (`ProjPCA`), arbitrary linear combination of channels (`ProjArbitrary`) or the identity of the channels (`ProjIdentity`)
-    5. zscore the data for different levels depending on the dataset
+    5. Whiten the components
 
 
 Classes
@@ -35,7 +35,7 @@ class BaseTransformer(ABC):
     -------
 
     common_preprocess()
-        Apply core transformer steps including rejection, standardization, and centering.
+        Apply core transformer steps including rejection, variance standardization, and centering.
 
     reject_crop_epochs(data)
         Crop each epoch from time 0 of the epoch to its interval with optional rejection criteria.
@@ -47,7 +47,7 @@ class BaseTransformer(ABC):
         can be applied based on signal amplitude thresholds in the interval.    
     
     data_format(data, weights, transformer_model, ori_coords, sfreq, offset)
-        Finalize the transformation by formatting and stacking the data.
+        Finalize the transformation by formatting the data.
 
     """
 
@@ -59,9 +59,9 @@ class BaseTransformer(ABC):
             too_long: Optional[float],
             reject_threshold: Optional[float],
             verbose: bool,
-            apply_standard: bool,
-            apply_zscore:bool,
-            centering: bool,
+            common_variance: bool,
+            whiten:bool,
+            center: bool,
             copy: bool,
 
     ):
@@ -71,16 +71,16 @@ class BaseTransformer(ABC):
         self.too_long = too_long
         self.reject_threshold = reject_threshold
         self.verbose = verbose
-        self.apply_standard = apply_standard
-        self.apply_zscore = apply_zscore
-        self.centering = centering
+        self.common_variance = common_variance
+        self.whiten = whiten
+        self.center = center
         self.copy = copy
     
     def common_preprocess(self, epoch_data) -> xr.DataArray:
         self.sfreq = epoch_data.sfreq
         data = epoch_data.data.copy(deep=self.copy) if self.copy else epoch_data.data
 
-        if self.apply_standard:
+        if self.common_variance:
             mean_std = data.std(dim=..., skipna=True) 
             data /= data.std(['epoch','sample','channel'], skipna=True)
             data *= mean_std
@@ -91,11 +91,13 @@ class BaseTransformer(ABC):
             # removes baseline
             data = data.sel(sample = range(int(data.sample.max())+1)).stack(trial=["participant", "epoch"])
             data = data.transpose("trial", "channel", "sample")
-            warn('No intervals provided, fitting HMP on the whole epoch duration from centering event')
+            warn('No intervals provided, fitting HMP on the whole epoch duration from center event')
             if self.reject_threshold is not np.inf or self.reject_threshold is not None:
                 warn("No rejection threshold can be applied for epoched data with no intervals provided")
-        if self.centering:
-            data -= data.mean(['sample'])
+
+        if self.center:
+            data -= data.mean(['sample'], skipna=True)
+
         return data.dropna("trial", how="all")
 
     def reject_crop_epochs(self, epoch_data:xr.Dataset):
@@ -189,9 +191,8 @@ class BaseTransformer(ABC):
         """Finalize the transformation: transpose, reassign coords, stack, and store attributes."""
         data.attrs["sfreq"] = self.sfreq
         data.attrs["offset"] = self.offset_after
-        if self.apply_zscore:
-            data -= data.mean(['sample'], skipna=True)
-            data /= data.std(['sample'], skipna=True)
+        if self.whiten:
+            data /= data.std(['trial','sample'], skipna=True)
         self.data = data
         self.weights = weights
         return self.data

@@ -29,9 +29,9 @@ class ProjPCA(BaseTransformer):
         Maximum duration threshold for keeping epochs.
     reject_threshold : float, optional
         Threshold for rejecting noisy epochs.
-    apply_standard : bool
+    common_variance : bool
         Whether to standardize variance across participants.
-    apply_zscore :bool
+    whiten :bool
         Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
     centering : bool
         Whether to center the data across the last dimension before projection
@@ -51,8 +51,8 @@ class ProjPCA(BaseTransformer):
         too_short: Optional[float] = None,
         too_long: Optional[float] = None,
         reject_threshold: Optional[float] = None,
-        apply_standard: bool = False,
-        apply_zscore: bool = True,
+        common_variance: bool = False,
+        whiten: bool = True,
         centering: bool = True,
         copy: bool = False,
         verbose: bool = True,
@@ -65,8 +65,8 @@ class ProjPCA(BaseTransformer):
             too_long=too_long,
             reject_threshold=reject_threshold,
             verbose=verbose,
-            apply_standard=apply_standard,
-            apply_zscore=apply_zscore,
+            common_variance=common_variance,
+            whiten=whiten,
             centering=centering,
             copy=copy,
         )
@@ -79,8 +79,10 @@ class ProjPCA(BaseTransformer):
         count = 0
         for i in range(data.sizes["trial"]):
             x_i = np.squeeze(data.isel(trial=i).values)
-            mask = ~np.isnan(x_i[0, :])
-            cov_i = x_i[:, mask] @ x_i[:, mask].T
+            x_i = x_i[:, ~np.isnan(x_i[0, :])]
+            if not self.centering: #ensure cov computation
+                x_i -= np.mean(x_i) 
+            cov_i = x_i @ x_i.T
             # Regularization
             cov_i += 1e-15 * np.eye(data.sizes["channel"])
             pca_ready_data += cov_i
