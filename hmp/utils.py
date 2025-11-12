@@ -5,7 +5,9 @@ from warnings import warn
 import numpy as np
 import xarray as xr
 from pandas import MultiIndex
+
 from hmp.transformers.base import BaseTransformer
+
 
 def _check_transformed(transformed):
     if isinstance(transformed, BaseTransformer):
@@ -269,13 +271,6 @@ def centered_activity(
         Xarray dataset with electrode value (data) and trial event time (time) and with
         trial * sample dimension
     """
-    if event == 0:  # no sample before stim onset
-        baseline = 0
-    elif event == 1:  # no event at stim onset
-        event_width = 0
-    if cut_before_event == 0:  # avoids searching before stim onset
-        cut_before_event = event
-
     if n_samples is None:
         if cut_after_event is None:
             raise ValueError(
@@ -334,7 +329,7 @@ def centered_activity(
                 ]
             )
         else:
-            lower_lim = 0
+            lower_lim = baseline
         if cut_after_event > 0:
             upper_lim = np.max(
                 [
