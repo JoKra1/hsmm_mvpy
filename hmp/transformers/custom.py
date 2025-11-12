@@ -1,26 +1,30 @@
 """Transforms epoched data using a custom linear combination for HMP analysis.
 
-Projects channels into a custom space given by a n_chan x n_component matrix. See example matrix when applying `ProjPCA` class.
+Projects channels into a custom space given by a n_chan x n_component matrix.
+ See example matrix when applying `ProjPCA` class.
 """
-import xarray as xr
-from warnings import warn
 from typing import Optional
+
+import xarray as xr
+
 from hmp.transformers.base import BaseTransformer
 
 
 class ProjCustom(BaseTransformer):
     """Transforms epoched data using a a custom linear combination for HMP analysis.
 
-    Projects channels into a custom space given by a n_chan x n_component matrix. See example matrix when applying `ProjPCA` class.
-    
+    Projects channels into a custom space given by a n_chan x n_component matrix.
+     See example matrix when applying `ProjPCA` class.
+
     Parameters
     ----------
     epoch_data : xr.Dataset
         Input EEG data with dimensions [participant, epoch, sample, channel], from `io` module
     weights: xr.DataArray
-        Custom linear combination of channels as an xarray.DataArray with 'channel' and 'component' dimensions and the weights
+        Custom linear combination of channels as an xarray.DataArray with 'channel' and 'component'
+         dimensions and the weights
     interval_id: str
-        Name of the variable that contains the per-trial intervals in the epoch_data used for cropping.
+        Name of the variable that contains the trial intervals in the epoch_data used for cropping.
     offset_after_end : float
         Time offset after interval start for cropping.
     min_duration : float, optional
@@ -32,7 +36,7 @@ class ProjCustom(BaseTransformer):
     common_variance : bool
         Whether to standardize variance across participants.
     whiten : bool
-        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
+        Return the components with unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
     copy : bool
@@ -40,8 +44,8 @@ class ProjCustom(BaseTransformer):
     verbose : bool
         Whether to print rejection/cropping details.
     """
-    
-    def __init__(
+
+    def __init__(#noqa: PLR0913
         self,
         epoch_data: xr.Dataset,
         weights: xr.DataArray,

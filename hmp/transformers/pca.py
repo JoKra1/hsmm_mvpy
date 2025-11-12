@@ -1,26 +1,34 @@
 """Transforms epoched data using a PCA for HMP analysis.
 
-Project channels to principal components space. The PCA is performed on subject-averaged covariance matrix among electrodes. The number of PC is either declared at initialization or a plot opens with a prompt to select based on the scree plot of the PCA.
+Project channels to principal components space.
+The PCA is performed on subject-averaged covariance matrix among electrodes.
+The number of PC is either declared at initialization or a plot opens with
+ a prompt to select based on the scree plot of the PCA.
 """
+from typing import Optional
+
+import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from warnings import warn
-from typing import Optional
 from scipy.linalg import eigh
-import matplotlib.pyplot as plt
+
 from hmp.transformers.base import BaseTransformer
-        
+
+
 class ProjPCA(BaseTransformer):
     """Transforms epoched data using a PCA for HMP analysis.
 
-    Project channels to principal components space. The PCA is performed on subject-averaged covariance matrix among electrodes. The number of PC is either declared at initialization or a plot opens with a prompt to select based on the scree plot of the PCA.
-    
+    Project channels to principal components space.
+    The PCA is performed on subject-averaged covariance matrix among electrodes.
+    The number of PC is either declared at initialization or a plot opens with
+     a prompt to select based on the scree plot of the PCA.
+
     Parameters
     ----------
     epoch_data : xr.Dataset
         Input EEG data with dimensions [participant, epoch, sample, channel], from `io` module
     interval_id: str
-        Name of the variable that contains the per-trial intervals in the epoch_data used for cropping.
+        Name of the variable that contains the trial intervals in the epoch_data used for cropping.
     offset_after_end : float
         Time offset after interval start for cropping.
     min_duration : float, optional
@@ -32,7 +40,7 @@ class ProjPCA(BaseTransformer):
     common_variance : bool
         Whether to standardize variance across participants.
     whiten : bool
-        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
+        Return the components with unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
     copy : bool
@@ -40,10 +48,11 @@ class ProjPCA(BaseTransformer):
     verbose : bool
         Whether to print rejection/cropping details.
     n_comp : int
-        Number of components in the PCA to retain for projection. If None (default), an interactive prompt will open asking for selection of a number given the PCA screeplot
+        Number of components in the PCA to retain for projection.
+        If None (default), a prompt will open asking to select a number
     """
-    
-    def __init__(
+
+    def __init__(#noqa: PLR0913
         self,
         epoch_data: xr.Dataset,
         interval_id: str = 'rt',
@@ -70,10 +79,10 @@ class ProjPCA(BaseTransformer):
             center=center,
             copy=copy,
         )
-        
+
         self.n_comp = n_comp
         data = self.common_preprocess(epoch_data)
-        
+
         # Performing spatial PCA on the average var-cov matrix
         pca_ready_data = np.zeros((data.sizes["channel"], data.sizes["channel"]), dtype=data.dtype)
         count = 0
@@ -81,16 +90,18 @@ class ProjPCA(BaseTransformer):
             x_i = np.squeeze(data.isel(trial=i).values)
             x_i = x_i[:, ~np.isnan(x_i[0, :])]
             if not self.center: #ensure cov computation
-                x_i -= np.mean(x_i) 
+                x_i -= np.mean(x_i)
             cov_i = x_i @ x_i.T
             # Regularization
             cov_i += 1e-15 * np.eye(data.sizes["channel"])
             pca_ready_data += cov_i
             count += 1
         pca_ready_data /= count
-        pca_ready_data 
+        pca_ready_data
         if self.n_comp is None:
-            self.n_comp = self.user_input_n_comp(pca_ready_data,  data.sizes["channel"], data.coords["channel"].values)
+            self.n_comp = self.user_input_n_comp(pca_ready_data,
+                                                 data.sizes["channel"],
+                                                 data.coords["channel"].values)
 
         weights, _ = self._pca(pca_ready_data, self.n_comp,
                             data.coords["channel"].values)
@@ -99,7 +110,10 @@ class ProjPCA(BaseTransformer):
             data, weights
         )
 
-    def _pca(self, pca_ready_data: xr.DataArray, n_comp: int, channel: xr.DataArray) -> xr.DataArray:
+    def _pca(self,
+             pca_ready_data: xr.DataArray,
+             n_comp: int,
+             channel: xr.DataArray) -> xr.DataArray:
         # Mostly from https://github.com/coffeine-labs/coffeine/blob/main/coffeine/spatial_filters.py
         eigvals, eigvecs = eigh(pca_ready_data)
         ix = np.argsort(np.abs(eigvals))[::-1]
@@ -110,11 +124,14 @@ class ProjPCA(BaseTransformer):
         pca_weights = xr.DataArray(evecs, dims=("channel", "component"), coords=coords)
         return pca_weights, eigvals[ix]
 
-    def user_input_n_comp(self, data: xr.DataArray, n_comp: int, channel: xr.DataArray) -> int:
+    def user_input_n_comp(self,
+                          data: xr.DataArray,
+                          n_comp: int,
+                          channel: xr.DataArray) -> int:
 
         n_comp = np.shape(data)[0] - 1
         fig, ax = plt.subplots(1, 2, figsize=(0.2 * n_comp, 4))
-        pca, eigenvalues = self._pca(data, n_comp, channels)
+        pca, eigenvalues = self._pca(data, n_comp, channel)
         explained_variance_ratio = eigenvalues/np.sum(eigenvalues)
         ax[0].plot(explained_variance_ratio, ".-")
         ax[0].set_ylabel("Normalized explained variance")

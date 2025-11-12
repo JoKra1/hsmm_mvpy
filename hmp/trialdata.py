@@ -1,12 +1,14 @@
 """Builds the data to be used in HMP model estimation."""
 from dataclasses import dataclass
 from functools import cached_property
-from numpy.typing import DTypeLike
 
 import numpy as np
 import xarray as xr
+from numpy.typing import DTypeLike
 from scipy.signal import correlate
+
 from hmp.utils import _check_transformed
+
 
 @dataclass
 class TrialData:
@@ -31,7 +33,6 @@ class TrialData:
         Offset applied to the data.
     cross_corr : np.ndarray
         Cross-correlation values between the data and a given pattern.
-        
     """
 
     xrdurations: xr.DataArray
@@ -82,17 +83,19 @@ class TrialData:
         xrdurations = durations.dropna("trial") - durations.dropna(
             "trial"
         ).shift(trial=1, fill_value=0)
-        
+
         n_trials = durations.trial.count().values
         metadata = (data.sel(component=0, sample=0).sel().drop_vars(['component', 'sample']))
         metadata = {k: v for k, v in metadata.coords.items() if k not in metadata.dims}
         for name, coord in metadata.items():
             if name not in xrdurations.coords:
                 xrdurations = xrdurations.assign_coords({name: coord})
-        data = data.unstack().stack(all_samples=['participant','epoch','sample']).dropna(dim="all_samples")
+        data = data.unstack().stack(all_samples=['participant','epoch','sample']).\
+            dropna(dim="all_samples")
         n_dims, n_samples = data.shape
         # Equation 1 in 2024 paper
-        cross_corr = cross_correlation(data.values.T, n_trials, n_dims, starts, ends, pattern, dtype)
+        cross_corr = cross_correlation(data.values.T, n_trials, n_dims, starts, ends, pattern,
+                                       dtype)
 
 
 
@@ -109,15 +112,14 @@ class TrialData:
         return self.cross_corr.shape[1]
 
 def cross_correlation(
-    data: np.ndarray,
-    n_trials: int,
-    n_dims: int,
-    starts: np.ndarray,
-    ends: np.ndarray,
-    pattern: np.ndarray,
-    dtype: DTypeLike,
-
-) -> np.ndarray:
+        data: np.ndarray,
+        n_trials: int,
+        n_dims: int,
+        starts: np.ndarray,
+        ends: np.ndarray,
+        pattern: np.ndarray,
+        dtype: DTypeLike,
+    ) -> np.ndarray:
     """Compute the cross-correlation between the data and a given pattern.
 
     This function calculates the correlation of each sample and the next

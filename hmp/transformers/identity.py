@@ -1,25 +1,30 @@
 """Transforms epoched data using a the ProjIdentity matrix for HMP analysis.
 
-Returns electrode values after performing transformation steps without the projection. For consistency the channel dimension is renamed 'component'
+Returns electrode values after performing transformation steps without the projection.
+For consistency the channel dimension is renamed 'component'
 """
+
+from typing import Optional
+from warnings import warn
 
 import numpy as np
 import xarray as xr
-from warnings import warn
-from typing import Optional
+
 from hmp.transformers.base import BaseTransformer
+
 
 class ProjIdentity(BaseTransformer):
     """Transforms epoched data using a the ProjIdentity matrix for HMP analysis.
 
-    Returns electrode values after performing transformation steps without the projection. For consistency the channel dimension is renamed 'component'
-    
+    Returns electrode values after performing transformation steps without the projection.
+    For consistency the channel dimension is renamed 'component'
+
     Parameters
     ----------
     epoch_data : xr.Dataset
         Input EEG data with dimensions [participant, epoch, sample, channel], from `io` module
     interval_id: str
-        Name of the variable that contains the per-trial intervals in the epoch_data used for cropping.
+        Name of the variable that contains the trial intervals in the epoch_data used for cropping.
     offset_after_end : float
         Time offset after interval start for cropping.
     min_duration : float, optional
@@ -31,7 +36,7 @@ class ProjIdentity(BaseTransformer):
     common_variance : bool
         Whether to standardize variance across participants.
     whiten : bool
-        Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
+        Return the components with unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
     copy : bool
@@ -39,8 +44,8 @@ class ProjIdentity(BaseTransformer):
     verbose : bool
         Whether to print rejection/cropping details.
     """
-    
-    def __init__(
+
+    def __init__(#noqa: PLR0913
         self,
         epoch_data: xr.Dataset,
         interval_id: str = 'rt',
@@ -83,4 +88,3 @@ class ProjIdentity(BaseTransformer):
             data, weights
         )
         self.weights = weights
-        
