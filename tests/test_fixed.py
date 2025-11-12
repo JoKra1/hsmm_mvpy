@@ -8,14 +8,13 @@ from hmp.models import EventModel
 from hmp.patterns import HalfSine
 from hmp.distributions import Gamma
 from hmp.trialdata import TrialData
-from hmp import preprocessing
 
 
 from test_io import init_data
 
 def data():
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data()
-    hmp_data = hmp.preprocessing.Standard(epoch_data, n_comp=2,)
+    hmp_data = hmp.transformers.ProjPCA(epoch_data, n_comp=5, copy=True)
     return event_b, event_a, epoch_data, hmp_data, positions, sfreq, n_events
 
 def test_fixed_simple():
@@ -24,7 +23,7 @@ def test_fixed_simple():
     # Data b is without noise, recovery should be perfect
     data_b = hmp.utils.participant_selection(hmp_data.data, 'b')
     event_properties = HalfSine.create_expected(sfreq=data_b.sfreq)
-    trial_data_b = TrialData.from_preprocessed(preprocessed=data_b, pattern=event_properties.template)
+    trial_data_b = TrialData.from_transformer(data_b, pattern=event_properties.template)
     time_distribution = Gamma()
     model = EventModel(event_properties, time_distribution, n_events=n_events)
     # Recover generating parameters
@@ -47,7 +46,8 @@ def test_fixed_simple():
     # test the difference between electrode values at event times
     assert np.isclose(np.sum(np.abs(true_topos.data - test_topos.data)), 0, atol=1e-4, rtol=0)
     # Test whether likelihood is the expected one
-    assert np.isclose(lkh_b, np.array(30.57338794), atol=1e-4, rtol=0)
+    print(lkh_b)
+    assert np.isclose(lkh_b, np.array(-3.95355467), atol=1e-5, rtol=0)
     
     # testing recovery of attributes
     model.xrlikelihoods
@@ -69,9 +69,9 @@ def test_fixed_grouping():
     hmp_data_a = hmp.utils.participant_selection(hmp_data.data, 'a')
     hmp_data_b = hmp.utils.participant_selection(hmp_data.data, 'b')
     event_properties = HalfSine.create_expected(sfreq=epoch_data.sfreq)
-    trial_data = TrialData.from_preprocessed(preprocessed=hmp_data, pattern=event_properties.template)
-    trial_data_a = TrialData.from_preprocessed(preprocessed=hmp_data_a, pattern=event_properties.template)
-    trial_data_b = TrialData.from_preprocessed(preprocessed=hmp_data_b, pattern=event_properties.template)
+    trial_data = TrialData.from_transformer(hmp_data, pattern=event_properties.template)
+    trial_data_a = TrialData.from_transformer(hmp_data_a, pattern=event_properties.template)
+    trial_data_b = TrialData.from_transformer(hmp_data_b, pattern=event_properties.template)
 
     model = EventModel(event_properties, n_events=n_events)
     # Recover generating parameters
@@ -88,7 +88,7 @@ def test_fixed_grouping():
     lkh_a, estimates_a = model.fit_transform(trial_data_a)
 
     # Fit model on both conditions (noiseless b should help estimate a)
-    trial_data = TrialData.from_preprocessed(preprocessed=hmp_data, pattern=event_properties.template)
+    trial_data = TrialData.from_transformer(hmp_data, pattern=event_properties.template)
     lkh_comb, estimates_comb = model.fit_transform(trial_data, time_map=time_map, channel_map=channel_map, grouping_dict=grouping_dict)
     lkh_a_group, estimates_a_group = model.transform(trial_data_a)
 
@@ -107,7 +107,7 @@ def test_fixed_grouping():
 def test_starting_points():
     _, _, epoch_data, hmp_data, positions, sfreq, n_events = data()
     event_properties = HalfSine.create_expected(sfreq=epoch_data.sfreq)
-    trial_data = TrialData.from_preprocessed(preprocessed=hmp_data, pattern=event_properties.template)
+    trial_data = TrialData.from_transformer(hmp_data, pattern=event_properties.template)
     # Testing starting points
     model_sp = EventModel(event_properties, n_events=n_events, starting_points=2, max_scale=21)
     model_sp.fit(trial_data, verbose=True)

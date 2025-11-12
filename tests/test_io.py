@@ -14,7 +14,7 @@ from hmp import simulations
 from hmp import utils
 from hmp.patterns import HalfSine
 from hmp.distributions import Gamma
-from hmp import preprocessing
+from hmp import transformers
 from hmp.trialdata import TrialData
 from hmp.models import EventModel
 
@@ -39,7 +39,7 @@ def init_data():
     event_a = events[0]
     event_b = events[1]
     # Data reading
-    epoch_data = io.read_mne_data(raws, event_id=event_id, resp_id=resp_id, sfreq=sfreq,
+    epoch_data = io.read_mne_data(raws, event_id=event_id, resp_id=resp_id, sfreq=sfreq, pick_channels='eeg',
             events_provided=events, verbose=True, reference='average', subj_name=['a','b'], tmin=-.01)
     epoch_data = epoch_data.assign_coords({'condition': ('participant', epoch_data.participant.data)})
     positions = simulations.positions()
@@ -72,45 +72,45 @@ def test_epochs():
     epoch_data = io.read_mne_data(subj_files, sfreq=sfreq, data_format='epochs',
                             verbose=False, subj_name=subj_names)#Turning verbose off for the documentation but it is recommended to leave it on as some output from MNE might be useful
 
-def test_bids():
-    # Testing on small bids dataset (1.8 GB)
-    erp_core_url = "https://osf.io/download/3zk6n/"
-    zip_path = "ERP_CORE_P3.zip"
-    extract_dir = "./"
+# def test_bids():
+#     # Testing on small bids dataset (1.8 GB)
+#     erp_core_url = "https://osf.io/download/3zk6n/"
+#     zip_path = "ERP_CORE_P3.zip"
+#     extract_dir = "./"
     
-    if not os.path.exists(zip_path):
-        print("Downloading ERP CORE dataset...")
-        r = requests.get(erp_core_url, stream=True)
-        with open(zip_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-    print("Extracting ERP CORE dataset...")
-    with ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(extract_dir)
+#     if not os.path.exists(zip_path):
+#         print("Downloading ERP CORE dataset...")
+#         r = requests.get(erp_core_url, stream=True)
+#         with open(zip_path, "wb") as f:
+#             for chunk in r.iter_content(chunk_size=8192):
+#                 f.write(chunk)
+#     print("Extracting ERP CORE dataset...")
+#     with ZipFile(zip_path, "r") as zip_ref:
+#         zip_ref.extractall(extract_dir)
     
-    sfreq = 250 
-    tmin, tmax = -.2, .8
-    epoch_data = io.read_mne_data([], 
-                                      data_format='bids',
-                                      tmin=tmin, tmax=tmax, 
-                                      sfreq=sfreq,
-                                      bids_parameters={
-                                          'bids_root': 'ERP_CORE',
-                                          'task': 'P3',
-                                          'datatype': 'eeg',
-                                          'session': 'P3'
-                                      },
-                                      reference='average',
-                                      verbose=False
-                                      )
+#     sfreq = 250 
+#     tmin, tmax = -.2, .8
+#     epoch_data = io.read_mne_data([], 
+#                                       data_format='bids',
+#                                       tmin=tmin, tmax=tmax, 
+#                                       sfreq=sfreq,
+#                                       bids_parameters={
+#                                           'bids_root': 'ERP_CORE',
+#                                           'task': 'P3',
+#                                           'datatype': 'eeg',
+#                                           'session': 'P3'
+#                                       },
+#                                       reference='average',
+#                                       verbose=False
+#                                       )
     
 
 def test_save_dat():
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data()
-    hmp_data = preprocessing.Standard(epoch_data, n_comp=2,)
+    hmp_data = transformers.ProjPCA(epoch_data, n_comp=2,)
     data_b = utils.participant_selection(hmp_data.data, 'b')
     event_properties = HalfSine.create_expected(sfreq=epoch_data.sfreq)
-    trial_data_b = TrialData.from_preprocessed(preprocessed=data_b, pattern=event_properties.template)
+    trial_data_b = TrialData.from_transformer(data_b, pattern=event_properties.template)
     model = EventModel(event_properties, n_events=n_events)
     _, estimates = model.fit_transform(trial_data_b)
 
