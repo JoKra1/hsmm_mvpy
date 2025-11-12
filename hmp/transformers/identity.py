@@ -20,17 +20,17 @@ class ProjIdentity(BaseTransformer):
         Input EEG data with dimensions [participant, epoch, sample, channel], from `io` module
     interval_id: str
         Name of the variable that contains the per-trial intervals in the epoch_data used for cropping.
-    offset_after : float
+    offset_after_end : float
         Time offset after interval start for cropping.
-    too_short : float, optional
+    min_duration : float, optional
         Minimum duration threshold for keeping epochs.
-    too_long : float, optional
+    max_duration : float, optional
         Maximum duration threshold for keeping epochs.
     reject_threshold : float, optional
         Threshold for rejecting noisy epochs.
     common_variance : bool
         Whether to standardize variance across participants.
-    whiten :bool
+    whiten : bool
         Z-scoring the components from the projection to represent them all as de-meaned and at unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
@@ -44,9 +44,9 @@ class ProjIdentity(BaseTransformer):
         self,
         epoch_data: xr.Dataset,
         interval_id: str = 'rt',
-        offset_after: float = 0,
-        too_short: Optional[float] = None,
-        too_long: Optional[float] = None,
+        offset_after_end: float = 0,
+        min_duration: Optional[float] = None,
+        max_duration: Optional[float] = None,
         reject_threshold: Optional[float] = None,
         common_variance: bool = False,
         whiten: bool = True,
@@ -56,9 +56,9 @@ class ProjIdentity(BaseTransformer):
     ):
         super().__init__(
             interval_id=interval_id,
-            offset_after=offset_after,
-            too_short=too_short,
-            too_long=too_long,
+            offset_after_end=offset_after_end,
+            min_duration=min_duration,
+            max_duration=max_duration,
             reject_threshold=reject_threshold,
             verbose=verbose,
             common_variance=common_variance,
@@ -67,8 +67,8 @@ class ProjIdentity(BaseTransformer):
             copy=copy,
         )
         warn('Identity projection might pose problems of dimensionality'
-             'and collinearity of channels. Thus rendering HMP estimation'
-             'difficult, use with care!')
+             ' and collinearity of channels. Thus rendering HMP estimation'
+             ' difficult, use with care!')
 
         # Preprocessing
         data = self.common_preprocess(epoch_data)

@@ -4,7 +4,7 @@ These provide methods to:
 
     1 Trim the trials data from epoch time 0 (e.g. stimulus onset) up to the specified interval (e.g. response), optionally including a fixed offset after the interval.
     2. Optionally standardize variance across subjects and center the data
-    3. Epochs whose interval exceeds specified lower and upper interval limits (`too_short` and `too_long` are rejected, additional rejection can be applied based on signal amplitude thresholds in the interval with `reject_threshold`
+    3. Epochs whose interval exceeds specified lower and upper interval limits (`min_duration` and `max_duration` are rejected, additional rejection can be applied based on signal amplitude thresholds in the interval with `reject_threshold`
     4. Project channels to new virtual channel, using the different classes, either based on a PCA (`ProjPCA`), arbitrary linear combination of channels (`ProjArbitrary`) or the identity of the channels (`ProjIdentity`)
     5. Whiten the components
 
@@ -54,9 +54,9 @@ class BaseTransformer(ABC):
     def __init__(
             self,
             interval_id: str,
-            offset_after: float,
-            too_short: Optional[float],
-            too_long: Optional[float],
+            offset_after_end: float,
+            min_duration: Optional[float],
+            max_duration: Optional[float],
             reject_threshold: Optional[float],
             verbose: bool,
             common_variance: bool,
@@ -66,15 +66,23 @@ class BaseTransformer(ABC):
 
     ):
         self.interval_id = interval_id
-        self.offset_after = offset_after
-        self.too_short = too_short
-        self.too_long = too_long
+        self.offset_after_end = offset_after_end
+        self.min_duration = min_duration
+        self.max_duration = max_duration
         self.reject_threshold = reject_threshold
         self.verbose = verbose
         self.common_variance = common_variance
         self.whiten = whiten
         self.center = center
         self.copy = copy
+        
+        if self.max_duration is None:
+            self.max_duration = (int(epoch_data.sample.max()) - offset_after_end_samples)/self.sfreq
+        if self.min_duration is None:
+            self.min_duration = 1 / self.sfreq
+        
+        if self.max_duration < 0 or self.min_duration < 0 or self.max_duration < self.min_duration:
+            raise ValueError("Limit to intervals cannot be negative")
     
     def common_preprocess(self, epoch_data) -> xr.DataArray:
         self.sfreq = epoch_data.sfreq
@@ -116,9 +124,6 @@ class BaseTransformer(ABC):
         epoch_data : np.ndarray
             Array of cropped epoch data that passed all criteria.
         """
-        sfreq=self.sfreq
-        too_short = self.too_short
-        too_long = self.too_long        
         epoch_data = epoch_data.stack(trial=["participant", "epoch"])
         epoch_data = epoch_data.transpose('trial','channel','sample')
         rts_arr = epoch_data.coords[self.interval_id].values.copy()
@@ -127,45 +132,41 @@ class BaseTransformer(ABC):
             warn(f"Found intervals with a max value value of {np.round(max_rt,2)}"
                 ", assuming intervals are in milliseconds and converting to seconds")
             rts_arr /= 1000
-        offset_after_samples = int(np.rint(self.offset_after * sfreq))
+        offset_after_end_samples = int(np.rint(self.offset_after_end * self.sfreq))
     
-        if too_long is None:
-            too_long = (int(epoch_data.sample.max()) - offset_after_samples)/sfreq
-        if too_short is None:
-            too_short = 1 / sfreq
-        if too_long < 0 or too_short < 0 or too_long < too_short:
-            raise ValueError("Limit to intervals cannot be negative")
-        rts_arr[rts_arr > too_long] = 0  # removes intervals above x sec
-        rts_arr[rts_arr < too_short] = 0  # removes intervals below x sec, determines max events
+
+        rts_arr[rts_arr > self.max_duration] = 0  # removes intervals above x sec
+        rts_arr[rts_arr < self.min_duration] = 0  # removes intervals below x sec, determines max events
         rt_criteria_rej = len(rts_arr[rts_arr == 0]) 
         inexistant_rej = len(rts_arr[np.isnan(rts_arr)])
         rts_arr[np.isnan(rts_arr)] = 0  # rejected during epoching or inexistant
         # Converting to samples
-        rts_arr = np.rint(rts_arr * sfreq).astype(int)
+        rts_arr = np.rint(rts_arr * self.sfreq).astype(int)
         
-        epoch_data = epoch_data.sel(sample=range(0, int(rts_arr.max()+offset_after_samples+1)))
-        assert len(rts_arr[rts_arr > 0]) > 0, "No intervals are between the requested limits of "\
-            f"minimum {too_short} and maximum {too_long} seconds"
+        epoch_data = epoch_data.sel(sample=range(0, int(rts_arr.max()+offset_after_end_samples+1)))
+        if len(rts_arr[rts_arr > 0]) == 0:
+            raise ValueError("No intervals are between the requested limits of "\
+                f"minimum {self.min_duration} and maximum {self.max_duration} seconds")
     
         min_rt = min(rts_arr[rts_arr > 0])
         if min_rt < 10:
             warn(f"The shortest interval is less than 10 samples. "
-                 "Consider specifying too short trials using the `too_short` parameter "
+                 "Consider specifying too short trials using the `min_duration` parameter "
                  "or increasing sampling frequency of the signal.")
     
         if self.verbose:
-            print(f"{len(rts_arr[rts_arr > 0])} intervals between {too_short} and "\
-                f"{too_long} seconds.")
+            print(f"{len(rts_arr[rts_arr > 0])} intervals between {self.min_duration} and "\
+                f"{self.max_duration} seconds.")
         rej = 0
         time0 = np.argmin(np.abs(epoch_data.sample.values))
         for i in range(len(epoch_data.data)):
             if rts_arr[i] > 0:
                 # Crops the epochs to time 0 (stim onset) up to RT
                 if (
-                    np.abs(epoch_data.values[i, :, time0 : time0 + rts_arr[i] + offset_after_samples])
+                    np.abs(epoch_data.values[i, :, time0 : time0 + rts_arr[i] + offset_after_end_samples])
                     < (self.reject_threshold or np.inf)
                 ).all():
-                    epoch_data.values[i, :, time0 + rts_arr[i] + offset_after_samples:] = np.nan
+                    epoch_data.values[i, :, time0 + rts_arr[i] + offset_after_end_samples:] = np.nan
                 elif ~np.isnan(epoch_data.values[i, 0, time0]):
                     epoch_data.values[i, :, :] = np.nan
                     rej += 1
@@ -175,10 +176,11 @@ class BaseTransformer(ABC):
             else:
                 epoch_data.values[i, :, :] = np.nan
     
-        assert rej < len(epoch_data), 'All trials rejected, inspect intervals and rejection criterion'
+        if rej == len(epoch_data):
+            raise ValueError('All trials rejected, inspect intervals and rejection criterion')
         if self.verbose:
             print(f"Rejection summary: \n {rej} trials rejected based on threshold of {self.reject_threshold}"
-             f"\n {rt_criteria_rej} trials rejected based on interval limit of {too_short, too_long}"
+             f"\n {rt_criteria_rej} trials rejected based on interval limit of {self.min_duration, self.max_duration}"
              f"\n {inexistant_rej} trials detected with no interval (e.g. rejection prior to HMP) ")
         epoch_data = epoch_data[~np.isnan(epoch_data.isel(sample=0, channel=0).values)]
         return epoch_data
@@ -190,7 +192,7 @@ class BaseTransformer(ABC):
     ) -> xr.DataArray:
         """Finalize the transformation: transpose, reassign coords, stack, and store attributes."""
         data.attrs["sfreq"] = self.sfreq
-        data.attrs["offset"] = self.offset_after
+        data.attrs["offset"] = self.offset_after_end
         if self.whiten:
             data /= data.std(['trial','sample'], skipna=True)
         self.data = data
