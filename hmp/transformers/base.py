@@ -76,11 +76,6 @@ class BaseTransformer(ABC):
         self.center = center
         self.copy = copy
         
-        if self.max_duration is None:
-            self.max_duration = (int(epoch_data.sample.max()) - offset_after_end_samples)/self.sfreq
-        if self.min_duration is None:
-            self.min_duration = 1 / self.sfreq
-        
         if self.max_duration < 0 or self.min_duration < 0 or self.max_duration < self.min_duration:
             raise ValueError("Limit to intervals cannot be negative")
     
@@ -94,6 +89,10 @@ class BaseTransformer(ABC):
             data *= mean_std
 
         if self.interval_id is not None:
+            if self.max_duration is 0:
+                self.max_duration = (int(epoch_data.sample.max()) - offset_after_end_samples)/self.sfreq
+            if self.min_duration is float('Inf'):
+                self.min_duration = 1 / self.sfreq
             data = self.reject_crop_epochs(data)
         else:
             # removes baseline
