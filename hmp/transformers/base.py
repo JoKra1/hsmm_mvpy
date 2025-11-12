@@ -89,9 +89,9 @@ class BaseTransformer(ABC):
             data *= mean_std
 
         if self.interval_id is not None:
-            if self.max_duration is 0:
+            if self.max_duration is float('Inf'):
                 self.max_duration = (int(epoch_data.sample.max()) - offset_after_end_samples)/self.sfreq
-            if self.min_duration is float('Inf'):
+            if self.min_duration is 0:
                 self.min_duration = 1 / self.sfreq
             data = self.reject_crop_epochs(data)
         else:
