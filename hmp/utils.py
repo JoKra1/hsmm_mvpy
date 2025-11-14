@@ -6,16 +6,18 @@ import numpy as np
 import xarray as xr
 from pandas import MultiIndex
 
-from hmp.transformers.base import BaseTransformer
+from hmp.transformers.custom import ProjCustom
+from hmp.transformers.identity import ProjIdentity
+from hmp.transformers.pca import ProjPCA
 
 
 def _check_transformed(transformed):
-    if isinstance(transformed, BaseTransformer):
+    if isinstance(transformed, (ProjPCA, ProjIdentity, ProjCustom)):
         data = transformed.data
     elif 'component' in transformed.dims:
         data = transformed
     else:
-        raise ValueError("transformed must be an hmp transformed object suing a class"
+        raise ValueError("transformed must be an hmp transformed object from a class"
                              "in hmp.transformers")
     return data
 
