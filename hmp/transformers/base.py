@@ -90,7 +90,7 @@ class BaseTransformer(ABC):
 
         if self.common_variance:
             pstds = data.std(['epoch','sample','channel'], skipna=True)
-        
+
         data = data.stack(trial=["participant", "epoch"]).dropna("trial", how="all")
         data = data.transpose('trial','channel','sample')
 
@@ -109,7 +109,7 @@ class BaseTransformer(ABC):
             warn('No intervals provided, fitting HMP on the whole epoch duration from center event')
             if self.reject_threshold is not np.inf or self.reject_threshold is not None:
                 warn("No rejection threshold can be applied when no intervals are provided")
-        
+
         if self.center:
             data -= data.mean(['sample'], skipna=True)
 
@@ -152,14 +152,14 @@ class BaseTransformer(ABC):
         rts_arr = np.rint(rts_arr * self.sfreq).astype(int)
 
         epoch_data = epoch_data.sel(
-                    sample=slice(0, 
+                    sample=slice(0,
                         min(
                             int(rts_arr.max() + offset_after_end_samples + 1),
                             epoch_data.sample.max().values
                         )
                 ), drop=True
         )
-        
+
         if len(rts_arr[rts_arr > 0]) == 0:
             raise ValueError("No intervals are between the requested limits of "\
                 f"minimum {self.min_duration} and maximum {self.max_duration} seconds")

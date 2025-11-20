@@ -82,7 +82,7 @@ class ProjPCA(BaseTransformer):
 
         self.n_comp = n_comp
         data = self.common_preprocess(epoch_data)
-        
+
         if common_variance:
             vcov_mat = self.compute_covariance(data, center)
         else:
@@ -101,7 +101,7 @@ class ProjPCA(BaseTransformer):
 
         weights, _ = self._pca(vcov_mat, self.n_comp,
                             data.coords["channel"].values)
-        
+
         data = data @ weights
         # Final formatting
         self.data, comp_stdev = self.data_format(
