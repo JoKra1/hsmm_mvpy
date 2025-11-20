@@ -4,10 +4,10 @@ These provide methods to:
 
     1. Trim the trials data from epoch time 0 (e.g. stimulus) up to a specified interval
        (e.g. response), optionally including a fixed offset after the interval.
-    2. Optionally standardize variance across subjects and center the data
-    3. Epochs whose interval exceeds lower and upper interval limits
+    2. Epochs whose interval exceeds lower and upper interval limits
        (`min_duration` and `max_duration`) are rejected.
        Additional rejection can be applied based on amplitude thresholds with `reject_threshold`
+    3. Optionally standardize variance across subjects and center the data
     4. Project channels to new virtual channel, using the different classes,
         either based on a PCA (`ProjPCA`),
         arbitrary linear combination of channels (`ProjArbitrary`)
@@ -40,7 +40,7 @@ class BaseTransformer(ABC):
 
     Methods
     -------
-    common_preprocess()
+    common_preprocess(data)
         Apply core transformer steps including rejection, variance standardization, and centering.
 
     reject_crop_epochs(data)
@@ -65,7 +65,7 @@ class BaseTransformer(ABC):
             reject_threshold: Optional[float],
             verbose: bool,
             common_variance: bool,
-            whiten:bool,
+            whiten: bool,
             center: bool,
             copy: bool,
 
@@ -89,9 +89,10 @@ class BaseTransformer(ABC):
         data = epoch_data.data.copy(deep=self.copy) if self.copy else epoch_data.data
 
         if self.common_variance:
-            mean_std = data.std(dim=..., skipna=True)
-            data /= data.std(['epoch','sample','channel'], skipna=True)
-            data *= mean_std
+            pstds = data.std(['epoch','sample','channel'], skipna=True)
+        
+        data = data.stack(trial=["participant", "epoch"]).dropna("trial", how="all")
+        data = data.transpose('trial','channel','sample')
 
         if self.interval_id is not None:
             if self.max_duration is float('Inf'):
@@ -102,15 +103,20 @@ class BaseTransformer(ABC):
             data = self.reject_crop_epochs(data)
         else:
             # removes baseline
-            data = data.sel(sample = range(int(data.sample.max())+1)).\
+            data = data.sel(sample = slice(0, int(data.sample.max())+1), drop=True).\
                     stack(trial=["participant", "epoch"])
             data = data.transpose("trial", "channel", "sample")
             warn('No intervals provided, fitting HMP on the whole epoch duration from center event')
             if self.reject_threshold is not np.inf or self.reject_threshold is not None:
                 warn("No rejection threshold can be applied when no intervals are provided")
-
+        
         if self.center:
             data -= data.mean(['sample'], skipna=True)
+
+        if self.common_variance:
+            data = data.unstack()
+            data /= pstds
+            data = data.stack(trial=["participant", "epoch"])
 
         return data.dropna("trial", how="all")
 
@@ -129,8 +135,6 @@ class BaseTransformer(ABC):
         epoch_data : np.ndarray
             Array of cropped epoch data that passed all criteria.
         """
-        epoch_data = epoch_data.stack(trial=["participant", "epoch"])
-        epoch_data = epoch_data.transpose('trial','channel','sample')
         rts_arr = epoch_data.coords[self.interval_id].values.copy()
         max_rt = np.nanmax(rts_arr)
         if max_rt > 500:
@@ -138,7 +142,6 @@ class BaseTransformer(ABC):
                 ", assuming intervals are in milliseconds and converting to seconds")
             rts_arr /= 1000
         offset_after_end_samples = int(np.rint(self.offset_after_end * self.sfreq))
-
 
         rts_arr[rts_arr > self.max_duration] = 0
         rts_arr[rts_arr < self.min_duration] = 0
@@ -148,8 +151,15 @@ class BaseTransformer(ABC):
         # Converting to samples
         rts_arr = np.rint(rts_arr * self.sfreq).astype(int)
 
-        epoch_data = epoch_data.sel(sample=range(0, int(rts_arr.max() +
-                        offset_after_end_samples+1)))
+        epoch_data = epoch_data.sel(
+                    sample=slice(0, 
+                        min(
+                            int(rts_arr.max() + offset_after_end_samples + 1),
+                            epoch_data.sample.max().values
+                        )
+                ), drop=True
+        )
+        
         if len(rts_arr[rts_arr > 0]) == 0:
             raise ValueError("No intervals are between the requested limits of "\
                 f"minimum {self.min_duration} and maximum {self.max_duration} seconds")
@@ -164,17 +174,17 @@ class BaseTransformer(ABC):
             print(f"{len(rts_arr[rts_arr > 0])} intervals between {self.min_duration} and "\
                 f"{self.max_duration} seconds.")
         rej = 0
-        time0 = np.argmin(np.abs(epoch_data.sample.values))
+        reject_threshold = self.reject_threshold if self.reject_threshold is not None else np.inf
         for i in range(len(epoch_data.data)):
             if rts_arr[i] > 0:
-                # Crops the epochs to time 0 (stim onset) up to RT
+                # Crops the epochs up to duration
                 if (
-                    np.abs(epoch_data.values[i, :, time0 : time0 + rts_arr[i] +\
+                    np.abs(epoch_data.values[i, :, :rts_arr[i] +\
                         offset_after_end_samples])
-                    < (self.reject_threshold or np.inf)
+                    < (reject_threshold)
                 ).all():
-                    epoch_data.values[i, :, time0 + rts_arr[i] + offset_after_end_samples:] = np.nan
-                elif ~np.isnan(epoch_data.values[i, 0, time0]):
+                    epoch_data.values[i, :, rts_arr[i] + offset_after_end_samples:] = np.nan
+                elif ~np.isnan(epoch_data.values[i, :, 0]).any():
                     epoch_data.values[i, :, :] = np.nan
                     rej += 1
                 else: # assumes rejected before
@@ -189,9 +199,25 @@ class BaseTransformer(ABC):
             print(f"Rejection summary: \n {rej} trials rejected based on threshold of "
              f"{self.reject_threshold} \n {rt_criteria_rej} trials rejected based on interval "
              f"limit of {self.min_duration, self.max_duration} \n {inexistant_rej} trials "
-             "detected with no interval (e.g. rejection prior to HMP) ")
-        epoch_data = epoch_data[~np.isnan(epoch_data.isel(sample=0, channel=0).values)]
+             "detected with no interval (e.g. preprocessing or interval exceeding epoch)) ")
         return epoch_data
+
+    @staticmethod
+    def compute_covariance(data, center):
+        vcov_mat = np.zeros((data.sizes["channel"], data.sizes["channel"]), dtype=np.float64)
+        count = 0
+        for i in data.trial:
+            x_i = np.squeeze(data.sel(trial=i).values)
+            x_i = x_i[:, ~np.isnan(x_i[0, :])]
+            if x_i.shape[1] > x_i.shape[0]:
+                if center:
+                    cov_i = (x_i @ x_i.T)/(x_i.shape[1]-1)
+                else:
+                    cov_i = np.cov(x_i, bias=1)
+                vcov_mat += cov_i
+                count += 1
+        vcov_mat /= count
+        return vcov_mat
 
     def data_format(
         self,
@@ -201,8 +227,9 @@ class BaseTransformer(ABC):
         """Finalize the transformation: transpose, reassign coords, stack, and store attributes."""
         data.attrs["sfreq"] = self.sfreq
         data.attrs["offset"] = self.offset_after_end
+        comp_stdev = data.std(['trial','sample'], skipna=True)
         if self.whiten:
-            data /= data.std(['trial','sample'], skipna=True)
+            data /= comp_stdev
         self.data = data
         self.weights = weights
-        return self.data
+        return self.data, comp_stdev
