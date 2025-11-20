@@ -84,7 +84,7 @@ class ProjIdentity(BaseTransformer):
         weights = np.identity(len(data.component))
 
         # Final formatting
-        self.data = self.data_format(
+        self.data, comp_stdev = self.data_format(
             data, weights
         )
-        self.weights = weights
+        self.comp_stdev = comp_stdev

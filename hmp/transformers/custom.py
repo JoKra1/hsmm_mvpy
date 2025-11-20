@@ -79,5 +79,8 @@ class ProjCustom(BaseTransformer):
         data = data @ weights
 
         # Final formatting
-        self.data = self.data_format(data, weights)
-        self.weights = weights
+        self.data, comp_stdev = self.data_format(
+            data, weights
+        )
+        self.comp_stdev = comp_stdev
+

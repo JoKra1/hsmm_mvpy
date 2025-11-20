@@ -58,9 +58,9 @@ class ProjPCA(BaseTransformer):
         interval_id: str = 'rt',
         offset_after_end: float = 0,
         min_duration: float = 0,
-        max_duration: float =float('Inf'),
+        max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
-        common_variance: bool = False,
+        common_variance: bool = True,
         whiten: bool = True,
         center: bool = True,
         copy: bool = False,
@@ -82,38 +82,38 @@ class ProjPCA(BaseTransformer):
 
         self.n_comp = n_comp
         data = self.common_preprocess(epoch_data)
+        
+        if common_variance:
+            vcov_mat = self.compute_covariance(data, center)
+        else:
+            participants = set(data.participant.values)
+            group_cov = np.zeros((len(participants), data.sizes["channel"], data.sizes["channel"]),
+                dtype=np.float64)
+            for j, participant in enumerate(participants):
+                part_data = data.where(data.participant == participant, drop=True)
+                group_cov[j] = self.compute_covariance(part_data,  center)
+            vcov_mat = np.mean(group_cov, axis=0)
 
-        # Performing spatial PCA on the average var-cov matrix
-        pca_ready_data = np.zeros((data.sizes["channel"], data.sizes["channel"]), dtype=data.dtype)
-        count = 0
-        for i in range(data.sizes["trial"]):
-            x_i = np.squeeze(data.isel(trial=i).values)
-            x_i = x_i[:, ~np.isnan(x_i[0, :])]
-            if not self.center: #ensure cov computation
-                x_i -= np.mean(x_i)
-            cov_i = x_i @ x_i.T
-            # Regularization
-            cov_i += 1e-15 * np.eye(data.sizes["channel"])
-            pca_ready_data += cov_i
-            count += 1
-        pca_ready_data /= count
-        pca_ready_data
         if self.n_comp is None:
-            self.n_comp = self.user_input_n_comp(pca_ready_data,
+            self.n_comp = self.user_input_n_comp(vcov_mat,
                                                  data.sizes["channel"],
                                                  data.coords["channel"].values)
 
-        weights, _ = self._pca(pca_ready_data, self.n_comp,
+        weights, _ = self._pca(vcov_mat, self.n_comp,
                             data.coords["channel"].values)
+        
         data = data @ weights
-        self.data = self.data_format(
+        # Final formatting
+        self.data, comp_stdev = self.data_format(
             data, weights
         )
+        self.comp_stdev = comp_stdev
 
     def _pca(self,
              pca_ready_data: xr.DataArray,
              n_comp: int,
              channel: xr.DataArray) -> xr.DataArray:
+
         # Mostly from https://github.com/coffeine-labs/coffeine/blob/main/coffeine/spatial_filters.py
         eigvals, eigvecs = eigh(pca_ready_data)
         ix = np.argsort(np.abs(eigvals))[::-1]
@@ -128,7 +128,6 @@ class ProjPCA(BaseTransformer):
                           data: xr.DataArray,
                           n_comp: int,
                           channel: xr.DataArray) -> int:
-
         n_comp = np.shape(data)[0] - 1
         fig, ax = plt.subplots(1, 2, figsize=(0.2 * n_comp, 4))
         pca, eigenvalues = self._pca(data, n_comp, channel)
