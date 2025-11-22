@@ -89,11 +89,12 @@ class BaseTransformer(ABC):
         data = epoch_data.data.copy(deep=self.copy) if self.copy else epoch_data.data
 
         if self.common_variance:
+            # estimate individual variances on all samples for better estimate
             pstds = data.std(['epoch','sample','channel'], skipna=True)
 
         data = data.stack(trial=["participant", "epoch"]).dropna("trial", how="all")
         data = data.transpose('trial','channel','sample')
-
+        
         if self.interval_id is not None:
             if self.max_duration is float('Inf'):
                 self.max_duration = (int(epoch_data.sample.max()) - self.offset_after_end\
@@ -103,22 +104,23 @@ class BaseTransformer(ABC):
             data = self.reject_crop_epochs(data)
         else:
             # removes baseline
-            data = data.sel(sample = slice(0, int(data.sample.max())+1), drop=True).\
+            data = data.sel(sample = slice(0, int(data.sample.max())), drop=True).\
                     stack(trial=["participant", "epoch"])
             data = data.transpose("trial", "channel", "sample")
             warn('No intervals provided, fitting HMP on the whole epoch duration from center event')
             if self.reject_threshold is not np.inf or self.reject_threshold is not None:
                 warn("No rejection threshold can be applied when no intervals are provided")
 
-        if self.center:
-            data -= data.mean(['sample'], skipna=True)
-
         if self.common_variance:
+            # avoids changing scale before reject_crop_epochs if rejection threshold applied
             data = data.unstack()
-            data /= pstds
+            data /= pstds #individual unit variance
             data = data.stack(trial=["participant", "epoch"])
+        else:
+            # Reduce to unit variance for consistency
+            data /= data.std(...)
 
-        return data.dropna("trial", how="all")
+        return data
 
     def reject_crop_epochs(self, epoch_data:xr.Dataset):
         """
@@ -200,23 +202,25 @@ class BaseTransformer(ABC):
              f"{self.reject_threshold} \n {rt_criteria_rej} trials rejected based on interval "
              f"limit of {self.min_duration, self.max_duration} \n {inexistant_rej} trials "
              "detected with no interval (e.g. preprocessing or interval exceeding epoch)) ")
-        return epoch_data
+        return epoch_data.dropna("trial", how="all")
 
     @staticmethod
     def compute_covariance(data, center):
         vcov_mat = np.zeros((data.sizes["channel"], data.sizes["channel"]), dtype=np.float64)
-        count = 0
+        n_samples = 0
+        # Iteratively for memory efficient
         for i in data.trial:
             x_i = np.squeeze(data.sel(trial=i).values)
             x_i = x_i[:, ~np.isnan(x_i[0, :])]
             if x_i.shape[1] > x_i.shape[0]:
-                if center:
-                    cov_i = (x_i @ x_i.T)/(x_i.shape[1]-1)
-                else:
-                    cov_i = np.cov(x_i, bias=1)
+                x_i -= x_i.mean(axis=1)[:, np.newaxis]
+                cov_i = np.dot(x_i, x_i.T)
                 vcov_mat += cov_i
-                count += 1
-        vcov_mat /= count
+                n_samples += x_i.shape[1]
+        if n_samples == 0:
+            raise ValueError('Not enough samples to compute covariance matrix')
+
+        vcov_mat /= n_samples - 1
         return vcov_mat
 
     def data_format(
@@ -227,6 +231,8 @@ class BaseTransformer(ABC):
         """Finalize the transformation: transpose, reassign coords, stack, and store attributes."""
         data.attrs["sfreq"] = self.sfreq
         data.attrs["offset"] = self.offset_after_end
+        if self.center:
+            data -= data.mean(['sample'], skipna=True)
         comp_stdev = data.std(['trial','sample'], skipna=True)
         if self.whiten:
             data /= comp_stdev
