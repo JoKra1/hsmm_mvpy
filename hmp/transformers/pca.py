@@ -50,6 +50,8 @@ class ProjPCA(BaseTransformer):
     n_comp : int
         Number of components in the PCA to retain for projection.
         If None (default), a prompt will open asking to select a number
+    method: str
+        Perform PCA ('pca', Default) or SVD decomposition ('svd')
     """
 
     def __init__(#noqa: PLR0913
@@ -60,12 +62,13 @@ class ProjPCA(BaseTransformer):
         min_duration: float = 0,
         max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
-        common_variance: bool = True,
+        common_variance: bool = False,
         whiten: bool = True,
         center: bool = True,
         copy: bool = False,
         verbose: bool = True,
         n_comp: Optional[int] = None,
+        method: str='pca'
     ):
         super().__init__(
             interval_id=interval_id,
@@ -73,64 +76,68 @@ class ProjPCA(BaseTransformer):
             min_duration=min_duration,
             max_duration=max_duration,
             reject_threshold=reject_threshold,
-            verbose=verbose,
             common_variance=common_variance,
             whiten=whiten,
             center=center,
+            verbose=verbose,
             copy=copy,
         )
 
         self.n_comp = n_comp
         data = self.common_preprocess(epoch_data)
-
-        if common_variance:
-            vcov_mat = self.compute_covariance(data, center)
-        else:
-            participants = set(data.participant.values)
-            group_cov = np.zeros((len(participants), data.sizes["channel"], data.sizes["channel"]),
-                dtype=np.float64)
-            for j, participant in enumerate(participants):
-                part_data = data.where(data.participant == participant, drop=True)
-                group_cov[j] = self.compute_covariance(part_data,  center)
-            vcov_mat = np.mean(group_cov, axis=0)
-
+        
+        participants = set(data.participant.values)
+        group_cov = np.zeros((len(participants), data.sizes["channel"], data.sizes["channel"]),
+            dtype=np.float64)
+        for j, participant in enumerate(participants):
+            part_data = data.where(data.participant == participant, drop=True)
+            group_cov[j] = self.compute_covariance(part_data)
+        vcov_mat = np.mean(group_cov, axis=0)
+        
         if self.n_comp is None:
             self.n_comp = self.user_input_n_comp(vcov_mat,
                                                  data.sizes["channel"],
-                                                 data.coords["channel"].values)
+                                                 data.coords["channel"].values, method)
 
         weights, _ = self._pca(vcov_mat, self.n_comp,
-                            data.coords["channel"].values)
+                            data.coords["channel"].values, method)
 
-        data = data @ weights
         # Final formatting
-        self.data, comp_stdev = self.data_format(
+        self.data_format(
             data, weights
         )
-        self.comp_stdev = comp_stdev
 
     def _pca(self,
              pca_ready_data: xr.DataArray,
              n_comp: int,
-             channel: xr.DataArray) -> xr.DataArray:
+             channel: xr.DataArray,
+            method:str) -> xr.DataArray:
+        
+        if method == 'pca':
+            eigvals, eigvecs = eigh(pca_ready_data)
+            ix = np.argsort(np.abs(eigvals))[::-1]
+            evecs = eigvecs[:, ix]
+            evecs = evecs[:, :n_comp]
+            eigvals = eigvals[ix]
 
-        # Mostly from https://github.com/coffeine-labs/coffeine/blob/main/coffeine/spatial_filters.py
-        eigvals, eigvecs = eigh(pca_ready_data)
-        ix = np.argsort(np.abs(eigvals))[::-1]
-        evecs = eigvecs[:, ix]
-        evecs = evecs[:, :n_comp]
+        elif method == 'svd':# Mainly for bacward compatibility
+            U, S, Vt = np.linalg.svd(pca_ready_data, full_matrices=False)
+            eigvals = (S**2) / (pca_ready_data.shape[0] - 1)
+            evecs = Vt.T[:, :n_comp]
+        
         # Rebuilding as xarray to ease computation
         coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))
         pca_weights = xr.DataArray(evecs, dims=("channel", "component"), coords=coords)
-        return pca_weights, eigvals[ix]
+        return pca_weights, eigvals
 
     def user_input_n_comp(self,
                           data: xr.DataArray,
                           n_comp: int,
-                          channel: xr.DataArray) -> int:
+                          channel: xr.DataArray,
+                          method: str) -> int:
         n_comp = np.shape(data)[0] - 1
         fig, ax = plt.subplots(1, 2, figsize=(0.2 * n_comp, 4))
-        pca, eigenvalues = self._pca(data, n_comp, channel)
+        pca, eigenvalues = self._pca(data, n_comp, channel, method)
         explained_variance_ratio = eigenvalues/np.sum(eigenvalues)
         ax[0].plot(explained_variance_ratio, ".-")
         ax[0].set_ylabel("Normalized explained variance")
