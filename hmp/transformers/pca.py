@@ -38,7 +38,9 @@ class ProjPCA(BaseTransformer):
     reject_threshold : float, optional
         Threshold for rejecting noisy epochs.
     common_variance : bool
-        Whether to standardize variance across participants.
+        Whether to standardize variance across trials.
+    subject_zscore: bool
+        Z-score each component for each participant
     whiten : bool
         Return the components with unit-variance
     center : bool
@@ -62,13 +64,14 @@ class ProjPCA(BaseTransformer):
         min_duration: float = 0,
         max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
-        common_variance: bool = False,
-        whiten: bool = True,
         center: bool = True,
+        whiten: bool = True,
+        common_variance: bool = True,
+        subject_zscore: bool = True,
         copy: bool = False,
         verbose: bool = True,
         n_comp: Optional[int] = None,
-        method: str='pca'
+        method: str='svd'
     ):
         super().__init__(
             interval_id=interval_id,
@@ -77,6 +80,7 @@ class ProjPCA(BaseTransformer):
             max_duration=max_duration,
             reject_threshold=reject_threshold,
             common_variance=common_variance,
+            subject_zscore=subject_zscore,
             whiten=whiten,
             center=center,
             verbose=verbose,
@@ -93,7 +97,6 @@ class ProjPCA(BaseTransformer):
             part_data = data.where(data.participant == participant, drop=True)
             group_cov[j] = self.compute_covariance(part_data)
         vcov_mat = np.mean(group_cov, axis=0)
-        
         if self.n_comp is None:
             self.n_comp = self.user_input_n_comp(vcov_mat,
                                                  data.sizes["channel"],
@@ -120,7 +123,7 @@ class ProjPCA(BaseTransformer):
             evecs = evecs[:, :n_comp]
             eigvals = eigvals[ix]
 
-        elif method == 'svd':# Mainly for bacward compatibility
+        elif method == 'svd':
             U, S, Vt = np.linalg.svd(pca_ready_data, full_matrices=False)
             eigvals = (S**2) / (pca_ready_data.shape[0] - 1)
             evecs = Vt.T[:, :n_comp]
