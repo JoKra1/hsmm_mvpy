@@ -7,12 +7,14 @@ These provide methods to:
     2. Epochs whose interval exceeds lower and upper interval limits
        (`min_duration` and `max_duration`) are rejected.
        Additional rejection can be applied based on amplitude thresholds with `reject_threshold`
-    3. Optionally standardize variance across subjects and center the data
+    3. Optionally  center the data (recommended for covariance based approahces
     4. Project channels to new virtual channel, using the different classes,
         either based on a PCA (`ProjPCA`),
         arbitrary linear combination of channels (`ProjArbitrary`)
         or the identity of the channels (`ProjIdentity`)
-    5. Whiten the components
+    5. Whiten the components and standardize each trial's variance ( `common_variance`) and
+        standardize the components for each participants
+      
 
 
 Classes
@@ -65,6 +67,7 @@ class BaseTransformer(ABC):
             reject_threshold: Optional[float],
             verbose: bool,
             common_variance: bool,
+            subject_zscore: bool,
             whiten: bool,
             center: bool,
             copy: bool,
@@ -77,6 +80,7 @@ class BaseTransformer(ABC):
         self.reject_threshold = reject_threshold
         self.verbose = verbose
         self.common_variance = common_variance
+        self.subject_zscore = subject_zscore
         self.whiten = whiten
         self.center = center
         self.copy = copy
@@ -229,7 +233,17 @@ class BaseTransformer(ABC):
         else:
             data /= data.std(..., skipna=True)
 
+        if self.common_variance:
+            data /= data.std(['component','sample'], skipna=True)
+
+        if self.subject_zscore:
+            data = data.unstack()
+            data -= data.mean(['epoch','sample'], skipna=True)
+            data /= data.std(['epoch','sample'], skipna=True)
+            data = data.stack(trial=['participant','epoch']).dropna("trial", how="all")
+        
         data.attrs["sfreq"] = self.sfreq
         data.attrs["offset"] = self.offset_after_end
         self.data = data
         self.weights = weights
+            
