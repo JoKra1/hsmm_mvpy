@@ -14,7 +14,6 @@ These provide methods to:
         or the identity of the channels (`ProjIdentity`)
     5. Whiten the components and standardize each trial's variance ( `common_variance`) and
         standardize the components for each participants
-      
 
 
 Classes
@@ -181,8 +180,6 @@ class BaseTransformer(ABC):
             else:
                 epoch_data.values[i, :, :] = np.nan
 
-        if rej == len(epoch_data):
-            raise ValueError('All trials rejected, inspect intervals and rejection criterion')
         if self.verbose:
             print(f"Rejection summary: \n {rej} trials rejected based on threshold of "
              f"{self.reject_threshold} \n {rt_criteria_rej} trials rejected based on interval "
