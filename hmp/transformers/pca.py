@@ -120,9 +120,9 @@ class ProjPCA(BaseTransformer):
             eigvals = eigvals[ix]
 
         elif method == 'svd':
-            U, S, Vt = np.linalg.svd(pca_ready_data, full_matrices=False)
-            eigvals = (S**2) / (pca_ready_data.shape[0] - 1)
-            evecs = Vt.T[:, :n_comp]
+            _, s, evecs = np.linalg.svd(pca_ready_data, full_matrices=False)
+            eigvals = (s**2) / (pca_ready_data.shape[0] - 1)
+            evecs = evecs.T[:, :n_comp]
 
         # Rebuilding as xarray to ease computation
         coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))

@@ -168,8 +168,8 @@ class BaseTransformer(ABC):
                 ).all():
                     epoch_data.values[i, :, time0 + rts_arr[i] + offset_after_end_samples:] = np.nan
                     if self.center:
-                        epoch_data.values[i] -= np.median(epoch_data.values[i, :, :time0+rts_arr[i] +\
-                        offset_after_end_samples], axis=-1, keepdims=True)
+                        epoch_data.values[i] -= np.median(epoch_data.values[i, :, :time0+rts_arr[i]\
+                            + offset_after_end_samples], axis=-1, keepdims=True)
 
                 elif ~np.isnan(epoch_data.values[i, :, 0]).any():
                     epoch_data.values[i, :, :] = np.nan
