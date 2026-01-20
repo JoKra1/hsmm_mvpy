@@ -33,12 +33,16 @@ class ProjCustom(BaseTransformer):
         Maximum duration threshold for keeping epochs.
     reject_threshold : float, optional
         Threshold for rejecting noisy epochs.
-    common_variance : bool
-        Whether to standardize variance across participants.
-    whiten : bool
-        Return the components with unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
+    whiten : bool
+        Return the components with unit-variance
+    common_variance : bool
+        Whether to standardize variance across trials.
+    subject_zscore: bool
+        Z-score each component for each participant
+    subject_zscore: bool
+        Participant-wise standardization of the projection components using zscores
     copy : bool
         Whether to copy the data before transforming.
     verbose : bool
@@ -54,9 +58,10 @@ class ProjCustom(BaseTransformer):
         min_duration: float = 0,
         max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
-        common_variance: bool = False,
-        whiten: bool = True,
         center: bool = True,
+        whiten: bool = True,
+        common_variance: bool = False,
+        subject_zscore: bool = False,
         copy: bool = False,
         verbose: bool = True,
     ):
@@ -68,6 +73,7 @@ class ProjCustom(BaseTransformer):
             reject_threshold=reject_threshold,
             verbose=verbose,
             common_variance=common_variance,
+            subject_zscore=subject_zscore,
             whiten=whiten,
             center=center,
             copy=copy,
@@ -75,12 +81,8 @@ class ProjCustom(BaseTransformer):
         # Preprocessing
         data = self.common_preprocess(epoch_data)
 
-        # Projection
-        data = data @ weights
-
         # Final formatting
-        self.data, comp_stdev = self.data_format(
+        self.data_format(
             data, weights
         )
-        self.comp_stdev = comp_stdev
 

@@ -34,7 +34,9 @@ class ProjIdentity(BaseTransformer):
     reject_threshold : float, optional
         Threshold for rejecting noisy epochs.
     common_variance : bool
-        Whether to standardize variance across participants.
+        Whether to standardize variance across trials.
+    subject_zscore: bool
+        Z-score each component for each participant
     whiten : bool
         Return the components with unit-variance
     center : bool
@@ -53,9 +55,10 @@ class ProjIdentity(BaseTransformer):
         min_duration: float = 0,
         max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
-        common_variance: bool = False,
-        whiten: bool = True,
         center: bool = False,
+        whiten: bool = True,
+        common_variance: bool = False,
+        subject_zscore: bool = False,
         copy: bool = False,
         verbose: bool = True,
     ):
@@ -67,6 +70,7 @@ class ProjIdentity(BaseTransformer):
             reject_threshold=reject_threshold,
             verbose=verbose,
             common_variance=common_variance,
+            subject_zscore=subject_zscore,
             whiten=whiten,
             center=center,
             copy=copy,
