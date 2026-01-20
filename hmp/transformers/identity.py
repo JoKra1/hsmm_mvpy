@@ -41,8 +41,6 @@ class ProjIdentity(BaseTransformer):
         Return the components with unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
-    copy : bool
-        Whether to copy the data before transforming.
     verbose : bool
         Whether to print rejection/cropping details.
     """
@@ -59,7 +57,6 @@ class ProjIdentity(BaseTransformer):
         whiten: bool = True,
         common_variance: bool = False,
         subject_zscore: bool = False,
-        copy: bool = False,
         verbose: bool = True,
     ):
         super().__init__(
@@ -73,7 +70,6 @@ class ProjIdentity(BaseTransformer):
             subject_zscore=subject_zscore,
             whiten=whiten,
             center=center,
-            copy=copy,
         )
         warn('Identity projection might pose problems of dimensionality'
              ' and collinearity of channels. Thus rendering HMP estimation'

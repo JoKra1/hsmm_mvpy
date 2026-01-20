@@ -43,8 +43,6 @@ class ProjCustom(BaseTransformer):
         Z-score each component for each participant
     subject_zscore: bool
         Participant-wise standardization of the projection components using zscores
-    copy : bool
-        Whether to copy the data before transforming.
     verbose : bool
         Whether to print rejection/cropping details.
     """
@@ -62,7 +60,6 @@ class ProjCustom(BaseTransformer):
         whiten: bool = True,
         common_variance: bool = False,
         subject_zscore: bool = False,
-        copy: bool = False,
         verbose: bool = True,
     ):
         super().__init__(
@@ -76,7 +73,6 @@ class ProjCustom(BaseTransformer):
             subject_zscore=subject_zscore,
             whiten=whiten,
             center=center,
-            copy=copy,
         )
         # Preprocessing
         data = self.common_preprocess(epoch_data)

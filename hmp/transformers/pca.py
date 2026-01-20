@@ -45,8 +45,6 @@ class ProjPCA(BaseTransformer):
         Return the components with unit-variance
     center : bool
         Whether to center the data across the last dimension before projection
-    copy : bool
-        Whether to copy the data before preprocessing.
     verbose : bool
         Whether to print rejection/cropping details.
     n_comp : int
@@ -68,7 +66,6 @@ class ProjPCA(BaseTransformer):
         whiten: bool = True,
         common_variance: bool = True,
         subject_zscore: bool = True,
-        copy: bool = False,
         verbose: bool = True,
         n_comp: Optional[int] = None,
         method: str='svd'
@@ -84,12 +81,11 @@ class ProjPCA(BaseTransformer):
             whiten=whiten,
             center=center,
             verbose=verbose,
-            copy=copy,
         )
 
         self.n_comp = n_comp
         data = self.common_preprocess(epoch_data)
-        
+
         participants = set(data.participant.values)
         group_cov = np.zeros((len(participants), data.sizes["channel"], data.sizes["channel"]),
             dtype=np.float64)
@@ -115,7 +111,7 @@ class ProjPCA(BaseTransformer):
              n_comp: int,
              channel: xr.DataArray,
             method:str) -> xr.DataArray:
-        
+
         if method == 'pca':
             eigvals, eigvecs = eigh(pca_ready_data)
             ix = np.argsort(np.abs(eigvals))[::-1]
@@ -127,7 +123,7 @@ class ProjPCA(BaseTransformer):
             U, S, Vt = np.linalg.svd(pca_ready_data, full_matrices=False)
             eigvals = (S**2) / (pca_ready_data.shape[0] - 1)
             evecs = Vt.T[:, :n_comp]
-        
+
         # Rebuilding as xarray to ease computation
         coords = dict(channel=("channel", channel), component=("component", np.arange(n_comp)))
         pca_weights = xr.DataArray(evecs, dims=("channel", "component"), coords=coords)

@@ -70,7 +70,6 @@ class BaseTransformer(ABC):
             subject_zscore: bool,
             whiten: bool,
             center: bool,
-            copy: bool,
 
     ):
         self.interval_id = interval_id
@@ -83,15 +82,14 @@ class BaseTransformer(ABC):
         self.subject_zscore = subject_zscore
         self.whiten = whiten
         self.center = center
-        self.copy = copy
 
         if self.max_duration < 0 or self.min_duration < 0 or self.max_duration < self.min_duration:
             raise ValueError("Limit to intervals cannot be negative")
 
     def common_preprocess(self, epoch_data) -> xr.DataArray:
         self.sfreq = epoch_data.sfreq
-        data = epoch_data.data.copy(deep=self.copy) if self.copy else epoch_data.data
-        
+        data = epoch_data.data
+
         data = data.stack(trial=["participant", "epoch"]).dropna("trial", how="all")
         data = data.transpose('trial','channel','sample')
 
@@ -173,7 +171,7 @@ class BaseTransformer(ABC):
                     if self.center:
                         epoch_data.values[i] -= np.median(epoch_data.values[i, :, :time0+rts_arr[i] +\
                         offset_after_end_samples], axis=-1, keepdims=True)
-                    
+
                 elif ~np.isnan(epoch_data.values[i, :, 0]).any():
                     epoch_data.values[i, :, :] = np.nan
                     rej += 1
@@ -227,7 +225,7 @@ class BaseTransformer(ABC):
         ) -> None:
         """Finalize the transformation, whiten and store attributes."""
         data = data @ weights.astype(data.dtype)
-        
+
         if self.whiten:
             data /= data.std(['trial','sample'], skipna=True)
         else:
@@ -241,9 +239,8 @@ class BaseTransformer(ABC):
             data -= data.mean(['epoch','sample'], skipna=True)
             data /= data.std(['epoch','sample'], skipna=True)
             data = data.stack(trial=['participant','epoch']).dropna("trial", how="all")
-        
+
         data.attrs["sfreq"] = self.sfreq
         data.attrs["offset"] = self.offset_after_end
         self.data = data
         self.weights = weights
-            
