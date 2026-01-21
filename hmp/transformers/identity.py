@@ -50,6 +50,7 @@ class ProjIdentity(BaseTransformer):
         epoch_data: xr.Dataset,
         interval_id: str = 'rt',
         offset_after_end: float = 0,
+        offset_before_start: float = 0,
         min_duration: float = 0,
         max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
@@ -62,6 +63,7 @@ class ProjIdentity(BaseTransformer):
         super().__init__(
             interval_id=interval_id,
             offset_after_end=offset_after_end,
+            offset_before_start=offset_before_start,
             min_duration=min_duration,
             max_duration=max_duration,
             reject_threshold=reject_threshold,
