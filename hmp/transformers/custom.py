@@ -61,8 +61,8 @@ class ProjCustom(BaseTransformer):
         reject_threshold: Optional[float] = None,
         center: bool = True,
         whiten: bool = True,
-        common_variance: bool = False,
-        subject_zscore: bool = False,
+        common_variance: bool = True,
+        subject_zscore: bool = True,
         verbose: bool = True,
     ):
         super().__init__(
