@@ -247,7 +247,9 @@ def _bids_extract_trig(bids_root, task):
 def _bids_extract_events(raw, verbose):
     # Extract events from annotations
     events, event_id = mne.events_from_annotations(raw, verbose=verbose)
-
+    # The two next lines avoid confusion for triggers < 1000
+    event_id = {k:v*1000 for k,v in event_id.items()}
+    events[:,2] *= 1000
     # Replace event codes in events array with the integer at the end of each key in *_id
     for key in event_id:
         try:
@@ -380,7 +382,8 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
         print(f"Downsampling to {sfreq} Hz")
         decim = np.round(data.info["sfreq"] / sfreq).astype(int)
         obtained_sfreq = data.info["sfreq"] / decim
-        low_pass = obtained_sfreq / 3.1
+        if low_pass is None:
+            low_pass = obtained_sfreq / 3.1
     else:
         decim = 1
         if sfreq > data.info["sfreq"] + 1:
@@ -406,7 +409,7 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
             row_events=stim,
             keep_first=["response"],
         )
-        metadata_i = metadata_i[["event_name", "response"]]  # only keep event_names and rts
+        metadata_i = metadata_i[["event_name", "response", 'first_response']]  # only keep event_names and rts
     else:
         metadata_i = metadata[subj_idx]
     epochs = mne.Epochs(
@@ -427,7 +430,7 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
         metadata=metadata_i,
         reject_by_annotation=True,
     )
-    epochs.metadata.rename({"response": "rt"}, axis=1, inplace=True)
+    epochs.metadata.rename({"response": "rt", "first_response":"response"}, axis=1, inplace=True)
     return epochs
 
 
