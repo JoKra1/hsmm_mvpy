@@ -25,8 +25,10 @@ class ProjCustom(BaseTransformer):
          dimensions and the weights
     interval_id: str
         Name of the variable that contains the trial intervals in the epoch_data used for cropping.
-    offset_after_end : float
-        Time offset after interval start for cropping.
+    offset_end : float
+        Time offset after interval end for cropping.
+    offset_start : float
+        Time offset before interval start for cropping. Negative number extends epoch before start.
     min_duration : float, optional
         Minimum duration threshold for keeping epochs.
     max_duration : float, optional
@@ -52,7 +54,8 @@ class ProjCustom(BaseTransformer):
         epoch_data: xr.Dataset,
         weights: xr.DataArray,
         interval_id: str = 'rt',
-        offset_after_end: float = 0,
+        offset_end: float = 0,
+        offset_start: float = 0,
         min_duration: float = 0,
         max_duration: float = float('Inf'),
         reject_threshold: Optional[float] = None,
@@ -64,7 +67,8 @@ class ProjCustom(BaseTransformer):
     ):
         super().__init__(
             interval_id=interval_id,
-            offset_after_end=offset_after_end,
+            offset_end=offset_end,
+            offset_start=offset_start,
             min_duration=min_duration,
             max_duration=max_duration,
             reject_threshold=reject_threshold,

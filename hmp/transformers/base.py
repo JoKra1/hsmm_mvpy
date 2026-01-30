@@ -60,7 +60,8 @@ class BaseTransformer(ABC):
     def __init__(
             self,
             interval_id: str,
-            offset_after_end: float,
+            offset_end: float,
+            offset_start: float,
             min_duration: Optional[float],
             max_duration: Optional[float],
             reject_threshold: Optional[float],
@@ -72,7 +73,8 @@ class BaseTransformer(ABC):
 
     ):
         self.interval_id = interval_id
-        self.offset_after_end = offset_after_end
+        self.offset_end = offset_end
+        self.offset_start = offset_start
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.reject_threshold = reject_threshold
@@ -94,7 +96,7 @@ class BaseTransformer(ABC):
 
         if self.interval_id is not None:
             if self.max_duration is float('Inf'):
-                self.max_duration = (int(epoch_data.sample.max()) - self.offset_after_end\
+                self.max_duration = (int(epoch_data.sample.max()) - self.offset_end + self.offset_start\
                                      * self.sfreq)/self.sfreq
             if self.min_duration == 0:
                 self.min_duration = 1 / self.sfreq
@@ -132,7 +134,8 @@ class BaseTransformer(ABC):
             warn(f"Found intervals with a max value value of {np.round(max_rt,2)}"
                 ", assuming intervals are in milliseconds and converting to seconds")
             rts_arr /= 1000
-        offset_after_end_samples = int(np.rint(self.offset_after_end * self.sfreq))
+        offset_end_samples = int(np.rint(self.offset_end * self.sfreq))
+        offset_start_samples = int(np.rint(self.offset_start * self.sfreq))
 
         rts_arr[rts_arr > self.max_duration] = 0
         rts_arr[rts_arr < self.min_duration] = 0
@@ -158,18 +161,21 @@ class BaseTransformer(ABC):
         rej = 0
         reject_threshold = self.reject_threshold if self.reject_threshold is not None else np.inf
         time0 = np.argmin(np.abs(epoch_data.sample.values))
+        if time0 + offset_start_samples < 0:
+            raise ValueError(f"Offset before start is too large for the epoch data provided. Max is {time0/self.sfreq} seconds.")
+        
         for i in range(len(epoch_data.data)):
             if rts_arr[i] > 0:
                 # Crops the epochs up to duration
                 if (
-                    np.abs(epoch_data.values[i, :, time0:time0+rts_arr[i] +\
-                        offset_after_end_samples])
+                    np.abs(epoch_data.values[i, :, time0 + offset_start_samples:time0 + rts_arr[i] +\
+                        offset_end_samples])
                     < (reject_threshold)
                 ).all():
-                    epoch_data.values[i, :, time0 + rts_arr[i] + offset_after_end_samples:] = np.nan
+                    epoch_data.values[i, :, time0 + rts_arr[i] + offset_end_samples:] = np.nan
                     if self.center:
                         epoch_data.values[i] -= np.median(epoch_data.values[i, :, :time0+rts_arr[i]\
-                            + offset_after_end_samples], axis=-1, keepdims=True)
+                            + offset_end_samples], axis=-1, keepdims=True)
 
                 elif ~np.isnan(epoch_data.values[i, :, 0]).any():
                     epoch_data.values[i, :, :] = np.nan
@@ -187,9 +193,9 @@ class BaseTransformer(ABC):
              "detected with no interval (e.g. preprocessing or interval exceeding epoch)) ")
 
         epoch_data = epoch_data.sel(
-                    sample=slice(0,
+                    sample=slice(offset_start_samples,
                         min(
-                            int(rts_arr.max() + offset_after_end_samples + 1),
+                            int(rts_arr.max() + offset_end_samples + 1),
                             epoch_data.sample.max().values
                         )
                 ), drop=True
@@ -238,6 +244,6 @@ class BaseTransformer(ABC):
             data = data.stack(trial=['participant','epoch']).dropna("trial", how="all")
 
         data.attrs["sfreq"] = self.sfreq
-        data.attrs["offset"] = self.offset_after_end
+        data.attrs["offset"] = self.offset_end
         self.data = data
         self.weights = weights
