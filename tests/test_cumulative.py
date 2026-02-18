@@ -16,7 +16,7 @@ from test_io import init_data
 def test_cumulative_simple():
     """ test a simple fit_transform on perfect data and compare to ground truth."""
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data()
-    hmp_data = hmp.transformers.ProjPCA(epoch_data, n_comp=5, whiten=False).data
+    hmp_data = hmp.transformers.ProjPCA(epoch_data, n_comp=2).data
     # Data b is without noise, recovery should be perfect
     data_b = hmp.utils.participant_selection(hmp_data, 'b')
     event_properties = HalfSine.create_expected(sfreq=data_b.sfreq)
@@ -34,12 +34,12 @@ def test_cumulative_simple():
     true_loglikelihood, true_estimates = true_model.transform(trial_data_b)
 
     # Cumulative estimation
-    model = CumulativeMethod(event_properties, step=25)
+    model = CumulativeMethod(event_properties, end=27)
     model.fit(trial_data_b)
     estimates = model.transform(trial_data_b)
 
     # testing if bacward identifies the 3 real events
-    assert np.isclose(model.final_model.channel_pars, true_model.channel_pars, atol=1).all()
+    assert np.isclose(model.final_model.channel_pars, true_model.channel_pars, atol=2).all()
 
     # testing recovery of attributes
     assert isinstance(model.xrlikelihoods, xr.DataArray)

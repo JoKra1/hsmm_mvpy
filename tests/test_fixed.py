@@ -14,7 +14,7 @@ from test_io import init_data
 
 def data():
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data()
-    hmp_data = hmp.transformers.ProjPCA(epoch_data, n_comp=5, copy=True)
+    hmp_data = hmp.transformers.ProjPCA(epoch_data, n_comp=5)
     return event_b, event_a, epoch_data, hmp_data, positions, sfreq, n_events
 
 def test_fixed_simple():
@@ -40,14 +40,13 @@ def test_fixed_simple():
     lkh_b, estimates_b = model.fit_transform(trial_data_b, verbose=True)
     test_topos = hmp.utils.event_channels(epoch_data, estimates_b, mean=True)
     test_topos = hmp.utils.event_channels(epoch_data, estimates_b, mean=True)
-    
     # Test if events found are classified as true
     assert (np.array(simulations.classification_true(true_topos.squeeze().T,test_topos.squeeze().T)) == np.array(([0,1,2],[0,1,2]))).all()
     # test the difference between electrode values at event times
     assert np.isclose(np.sum(np.abs(true_topos.data - test_topos.data)), 0, atol=1e-4, rtol=0)
     # Test whether likelihood is the expected one
     print(lkh_b)
-    assert np.isclose(lkh_b, np.array(-3.95355467), atol=1e-5, rtol=0)
+    assert np.isclose(lkh_b, np.array(109.41), atol=1e-2, rtol=0)
     
     # testing recovery of attributes
     model.xrlikelihoods

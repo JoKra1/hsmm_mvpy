@@ -1,4 +1,3 @@
-## Importing these packages is specific for this simulation case
 import pytest
 from pathlib import Path
 from hmp import io
@@ -12,7 +11,6 @@ DATA_DIR_B = DATA_DIR / "dataset_b"
 
 @pytest.fixture
 def init_data():
-    # Also tests data_format 'raw'
     """ Initialize all data and model related info."""
     sfreq = 100
     n_events = 3
@@ -30,34 +28,36 @@ def init_data():
     epoch_data = io.read_mne_data(raws, event_id=event_id, resp_id=resp_id, sfreq=sfreq,
             events_provided=events, verbose=True, reference='average', subj_name=['a','b'], tmin=-.01)
     epoch_data = epoch_data.assign_coords({'condition': ('participant', epoch_data.participant.data)})
+    epoch_data = epoch_data.sel(channel=epoch_data.channel[::4])
+    print(epoch_data.channel)
     positions = simulations.positions()
     return event_b, event_a, epoch_data, positions, sfreq, n_events
 
-@pytest.mark.parametrize("n_comp,center,whiten,reject_threshold,too_short,too_long", [
+@pytest.mark.parametrize("n_comp,center,whiten,reject_threshold,min_duration,max_duration", [
     (5, True, True, None, None, None),
-    (59, False, True, 0.1, None, None),
+    (10, False, True, 0.1, None, None),
     (1, True, False, None, 0.05, 1.5),
     (2, False, False, 0.2, 0.1, 2.0),
 ])
-def test_proj_pca_custom_variants(init_data, n_comp, center, whiten, reject_threshold, too_short, too_long):
+def test_proj_pca_custom_variants(init_data, n_comp, center, whiten, reject_threshold, min_duration, max_duration):
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data
     pca = ProjPCA(epoch_data, n_comp=n_comp, center=center, whiten=whiten)
-    assert pca.data.shape[-1] == n_comp
+    assert pca.data.shape[1] == n_comp
     if whiten:
         assert np.allclose(pca.data.var(dim=['trial','sample']), 1, atol=0.05)
         
     custom = ProjCustom(epoch_data, weights=pca.weights, center=center, whiten=whiten)
-    assert custom.data.shape[-1] == n_comp
+    assert custom.data.shape[1] == n_comp
     if whiten:
         assert np.allclose(custom.data.var(dim=['trial','sample']), 1, atol=0.05)
 
-@pytest.mark.parametrize("center,whiten,reject_threshold,too_short,too_long", [
+@pytest.mark.parametrize("center,whiten,reject_threshold,min_duration,max_duration", [
     (True, True, None, None, None),
     (False, True, 0.1, None, None),
     (True, False, None, 0.05, 1.5),
     (False, False, 0.2, 0.1, 2.0),
 ])
-def test_proj_identity_variants(init_data, center, whiten, reject_threshold, too_short, too_long):
+def test_proj_identity_variants(init_data, center, whiten, reject_threshold, min_duration, max_duration):
     event_b, event_a, epoch_data, positions, sfreq, n_events = init_data
     identity = ProjIdentity(epoch_data, center=center, whiten=whiten)
     assert identity.data.shape[1] == epoch_data.sizes['channel']
