@@ -409,7 +409,7 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
             row_events=stim,
             keep_first=["response"],
         )
-        metadata_i = metadata_i[["event_name", "response", 'first_response']]  # only keep event_names and rts
+        metadata_i = metadata_i[["event_name", "response"]]  # only keep event_names and rts
     else:
         metadata_i = metadata[subj_idx]
     epochs = mne.Epochs(
@@ -430,7 +430,7 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
         metadata=metadata_i,
         reject_by_annotation=True,
     )
-    epochs.metadata.rename({"response": "rt", "first_response":"response"}, axis=1, inplace=True)
+    epochs.metadata.rename({"response": "rt"}, axis=1, inplace=True)
     return epochs
 
 
