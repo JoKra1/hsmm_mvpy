@@ -246,7 +246,7 @@ class BaseTransformer(ABC):
             data -= data.mean(['epoch','sample'], skipna=True)
             data /= data.std(['epoch','sample'], skipna=True)
             data = data.stack(trial=['participant','epoch']).dropna("trial", how="all")
-
+        data = data.transpose('sample','component','trial')
         data.attrs["sfreq"] = self.sfreq
         data.attrs["offset"] = self.offset_end
         self.data = data
