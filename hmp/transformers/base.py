@@ -57,7 +57,7 @@ class BaseTransformer(ABC):
 
     """
 
-    def __init__(
+    def __init__( # noqa: PLR0913
             self,
             interval_id: str,
             offset_end: float,
@@ -96,9 +96,9 @@ class BaseTransformer(ABC):
 
         if self.interval_id is not None:
             if self.max_duration is float('Inf'):
-                self.max_duration = (int(epoch_data.sample.max()) - self.offset_end + self.offset_start\
-                                     * self.sfreq)/self.sfreq
-            
+                self.max_duration = (int(epoch_data.sample.max()) - self.offset_end\
+                                     + self.offset_start * self.sfreq)/self.sfreq
+
             if self.min_duration == 0:
                 self.min_duration = 1 / self.sfreq
             data = self.reject_crop_epochs(data)
@@ -156,21 +156,19 @@ class BaseTransformer(ABC):
                  "Consider specifying too short trials using the `min_duration` parameter "
                  "or increasing sampling frequency of the signal.")
 
-        if self.verbose:
-            print(f"{len(rts_arr[rts_arr > 0])} positively defined intervals between {self.min_duration} and "\
-                f"{self.max_duration} seconds.")
         rej = 0
         reject_threshold = self.reject_threshold if self.reject_threshold is not None else np.inf
         time0 = np.argmin(np.abs(epoch_data.sample.values))
         if time0 + offset_start_samples < 0:
-            raise ValueError(f"Offset before start is too large for the epoch data provided. Max is {time0/self.sfreq} seconds.")
-        
+            raise ValueError("Offset before start is too large for the epoch data provided."
+                             f"Max is {time0/self.sfreq} seconds.")
+
         for i in range(len(epoch_data.data)):
             if rts_arr[i] > 0:
                 # Crops the epochs up to duration
                 if (
-                    np.abs(epoch_data.values[i, :, time0 + offset_start_samples:time0 + rts_arr[i] +\
-                        offset_end_samples])
+                    np.abs(epoch_data.values[i, :, time0 + offset_start_samples:time0 + rts_arr[i]\
+                        + offset_end_samples])
                     < (reject_threshold)
                 ).all():
                     epoch_data.values[i, :, time0 + rts_arr[i] + offset_end_samples:] = np.nan
@@ -188,6 +186,8 @@ class BaseTransformer(ABC):
                 epoch_data.values[i, :, :] = np.nan
 
         if self.verbose:
+            print(f"{len(rts_arr[rts_arr > 0])} positively defined intervals"\
+                f"between {self.min_duration} and {self.max_duration} seconds.")
             print(f"Rejection summary: \n {rej} trials rejected based on threshold of "
              f"{self.reject_threshold} \n {rt_criteria_rej} trials rejected based on interval "
              f"limit of {self.min_duration, self.max_duration} \n {inexistant_rej} trials "
@@ -221,8 +221,8 @@ class BaseTransformer(ABC):
                 cov_i.flat[:: len(cov_i) + 1] += 0.1 * sigma
                 vcov_mat += cov_i
         if count < len(data.trial)/10:
-            warn(f"Less than 10% of the trials used for covariance computation for {data.participant.values}."
-                 "Computed covariance matrix might be unreliable")
+            warn(f"Less than 10% of the trials used to compute covariance for"
+                 f"{data.participant.values}. Covariance matrix might be unreliable")
         return vcov_mat/count
 
     def data_format(
