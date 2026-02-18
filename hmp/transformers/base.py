@@ -98,6 +98,7 @@ class BaseTransformer(ABC):
             if self.max_duration is float('Inf'):
                 self.max_duration = (int(epoch_data.sample.max()) - self.offset_end + self.offset_start\
                                      * self.sfreq)/self.sfreq
+            
             if self.min_duration == 0:
                 self.min_duration = 1 / self.sfreq
             data = self.reject_crop_epochs(data)
@@ -156,7 +157,7 @@ class BaseTransformer(ABC):
                  "or increasing sampling frequency of the signal.")
 
         if self.verbose:
-            print(f"{len(rts_arr[rts_arr > 0])} intervals between {self.min_duration} and "\
+            print(f"{len(rts_arr[rts_arr > 0])} positively defined intervals between {self.min_duration} and "\
                 f"{self.max_duration} seconds.")
         rej = 0
         reject_threshold = self.reject_threshold if self.reject_threshold is not None else np.inf
@@ -219,6 +220,9 @@ class BaseTransformer(ABC):
                 sigma = np.mean(np.diag(cov_i))
                 cov_i.flat[:: len(cov_i) + 1] += 0.1 * sigma
                 vcov_mat += cov_i
+        if count < len(data.trial)/10:
+            warn(f"Less than 10% of the trials used for covariance computation for {data.participant.values}."
+                 "Computed covariance matrix might be unreliable")
         return vcov_mat/count
 
     def data_format(
