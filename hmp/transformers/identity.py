@@ -83,12 +83,12 @@ class ProjIdentity(BaseTransformer):
         data = self.common_preprocess(epoch_data)
 
         # Projection
-        data = data.rename({"channel": "component"})
-        data["component"] = np.arange(len(data.component))
-        weights = np.identity(len(data.component))
-
+        weights = xr.DataArray(
+            np.identity(len(epoch_data.channel)),
+            dims=("channel", "component"),
+            coords={"channel": epoch_data.channel, "component": np.arange(len(epoch_data.channel))}
+        )
         # Final formatting
-        self.data, comp_stdev = self.data_format(
+        self.data_format(
             data, weights
         )
-        self.comp_stdev = comp_stdev
