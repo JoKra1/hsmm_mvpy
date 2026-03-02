@@ -419,7 +419,7 @@ def demo(cpus, n_events, seed=123, overwrite=False):
 
     # Reading the data
     eeg_dat = read_mne_data(files[0], event_id, resp_id, events_provided=events,
-                            verbose=False, offset_after_resp=0.025)
+                            verbose=False)
 
     all_other_chans = range(len(positions.ch_names[:-61]))  # non-eeg
     chan_list = list(np.arange(len(positions.ch_names)))

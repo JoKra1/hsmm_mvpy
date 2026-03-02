@@ -6,34 +6,20 @@ import numpy as np
 import xarray as xr
 from pandas import MultiIndex
 
-
-def stack_data(data):
-    """Stack the data.
-
-    Going from format [participant * epochs * sample * channel] to
-    [sample * channel] with sample indexes starts and ends to delimitate the epochs.
+from hmp.transformers.custom import ProjCustom
+from hmp.transformers.identity import ProjIdentity
+from hmp.transformers.pca import ProjPCA
 
 
-    Parameters
-    ----------
-    data : xarray
-        unstacked xarray data from transform_data() or anyother source yielding an xarray with
-        dimensions [participant * epochs * sample * channel]
-    subjects_variable : str
-        name of the dimension for subjects ID
-
-    Returns
-    -------
-    data : xarray.Dataset
-        xarray dataset [sample * channel]
-    """
-    if isinstance(data, (xr.DataArray, xr.Dataset)) and "component" not in data.dims:
-        data = data.rename_dims({"channel": "component"})
-    if "participant" not in data.dims:
-        data = data.expand_dims("participant")
-    data = data.stack(all_samples=["participant", "epoch", "sample"]).dropna(dim="all_samples")
+def _check_transformed(transformed):
+    if isinstance(transformed, (ProjPCA, ProjIdentity, ProjCustom)):
+        data = transformed.data
+    elif 'component' in transformed.dims:
+        data = transformed
+    else:
+        raise ValueError("transformed must be an hmp transformed object from a class"
+                             "in hmp.transformers")
     return data
-
 
 def event_times(  # noqa: PLR0912
     estimates,
@@ -199,9 +185,8 @@ def event_channels(
     common_trial = np.intersect1d(
         estimated["trial"].values, epoch_data["trial"].values
     )
-    epoch_data = epoch_data.sel(trial=common_trial)
+    epoch_data = epoch_data.sel(trial=common_trial, sample=estimated.sample)
     estimated = estimated.sel(trial=common_trial)
-
     n_events = estimated.event.count().values
     n_trial = estimated.trial.count().values
     n_channel = epoch_data.channel.count().values
@@ -210,7 +195,7 @@ def event_channels(
         normed_template = template / np.sum(template)
 
     times = event_times(estimated, mean=False, estimate_method=estimate_method,)
-
+    times = times.sel(trial=common_trial)
     event_values = np.zeros((n_channel, n_trial, n_events))*np.nan
     for ev in range(n_events):
         for tr in range(n_trial):
@@ -288,13 +273,6 @@ def centered_activity(
         Xarray dataset with electrode value (data) and trial event time (time) and with
         trial * sample dimension
     """
-    if event == 0:  # no sample before stim onset
-        baseline = 0
-    elif event == 1:  # no event at stim onset
-        event_width = 0
-    if cut_before_event == 0:  # avoids searching before stim onset
-        cut_before_event = event
-
     if n_samples is None:
         if cut_after_event is None:
             raise ValueError(
@@ -353,7 +331,7 @@ def centered_activity(
                 ]
             )
         else:
-            lower_lim = 0
+            lower_lim = baseline
         if cut_after_event > 0:
             upper_lim = np.max(
                 [
@@ -400,19 +378,19 @@ def centered_activity(
     return centered_data.assign_coords(trial_x_part)
 
 
-def condition_selection(preprocessed_data, condition_string, variable="event", method="equal"):
-    """Select a subset from preprocessed_data.
+def condition_selection(transformed, condition_string, variable="event", method="equal"):
+    """Select a subset from transformed_data.
 
     The function selects epochs for which 'condition_string' is in 'variable' based on 'method'.
 
     Parameters
     ----------
-    preprocessed_data : xr.Dataset
-        transformed EEG data for hmp, from utils.transform_data
+    transformed : xr.Dataset
+        transformed EEG data for hmp from the hmp.preprocessing classes
     condition_string : str | num
         condition indicator for selection
     variable : str
-        variable present in preprocessed_data that is used for condition selection
+        variable present in transformed.data that is used for condition selection
     method : str
         'equal' selects equal trial, 'contains' selects trial in which conditions_string
         appears in variable
@@ -420,20 +398,17 @@ def condition_selection(preprocessed_data, condition_string, variable="event", m
     Returns
     -------
     data : xr.Dataset
-        Subset of preprocessed_data.
+        Subset of transformed_data.
     """
-    unstacked = preprocessed_data.unstack()
-    unstacked[variable] = unstacked[variable].fillna("")
+    data = _check_transformed(transformed).unstack()
+    data[variable] = data[variable].fillna("")
     if method == "equal":
-        unstacked = unstacked.where(unstacked[variable] == condition_string, drop=True)
-        stacked = stack_data(unstacked)
+        data = data.where(data[variable] == condition_string, drop=True)
     elif method == "contains":
-        unstacked = unstacked.where(unstacked[variable].str.contains(condition_string), drop=True)
-        stacked = stack_data(unstacked)
+        data = data.where(data[variable].str.contains(condition_string), drop=True)
     else:
         warn("unknown method, returning original data")
-        stacked = preprocessed_data
-    return stacked
+    return data.stack(trial=['participant','epoch'])
 
 
 def condition_selection_epoch(epoch_data, condition_string, variable="event", method="equal"):
@@ -444,11 +419,11 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     Parameters
     ----------
     epoch_data : xr.Dataset
-        transformed EEG data for hmp, e.g. from utils.read_mne_data()
+        Epoched EEG data for hmp
     condition_string : str | num
         condition indicator for selection
     variable : str
-        variable present in preprocessed_data that is used for condition selection
+        variable present in transformed_data that is used for condition selection
     method : str
         'equal' selects equal trial, 'contains' selects trial in which conditions_string
         appears in variable
@@ -456,7 +431,7 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     Returns
     -------
     data : xr.Dataset
-        Subset of preprocessed_data.
+        Subset of transformed_data.
     """
     if len(epoch_data.dims) == 4:
         stacked_epoch_data = epoch_data.stack(trial=("participant", "epoch")).dropna(
@@ -474,21 +449,23 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
     return stacked_epoch_data.unstack()
 
 
-def participant_selection(preprocessed_data, participant):
-    """Select a participant from preprocessed_data.
+def participant_selection(transformed, participant):
+    """Select a participant from transformed_data.
 
     Parameters
     ----------
-    preprocessed_data : xr.Dataset
-        transformed EEG data for hmp, from utils.transform_data
+    transformed : xr.Dataset or hmp.transformers
+        transformed EEG data for hmp
     participant : str | num
         Name of the participant
 
     Returns
     -------
     data : xr.Dataset
-        Subset of preprocessed_data.
+        Subset of transformed_data.
     """
-    unstacked = preprocessed_data.unstack().sel(participant=participant)
-    stacked = stack_data(unstacked)
-    return stacked
+    data = _check_transformed(transformed).unstack()
+    data = data.sel(participant=participant, drop=False)
+    if 'participant' not in data.dims:
+        data = data.expand_dims('participant')
+    return data.stack(trial=['participant','epoch'])
