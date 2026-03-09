@@ -922,7 +922,7 @@ class EventModel(BaseModel):
             xreventprobs = xreventprobs.assign_coords(trial_x_part)
             xreventprobs = xreventprobs.assign_coords(group=("trial", groups[groups == cur_group],))
             all_xreventprobs.append(xreventprobs)
-        all_xreventprobs = xr.concat(all_xreventprobs, dim="trial")
+        all_xreventprobs = xr.concat(all_xreventprobs, dim="trial", join='outer')
         all_xreventprobs.attrs['sfreq'] = self.sfreq
         all_xreventprobs.attrs['event_width_samples'] = self.event_width_samples
         return [np.array(likelihood), all_xreventprobs]
