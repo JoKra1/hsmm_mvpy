@@ -13,6 +13,7 @@ import json
 import os
 import warnings
 from pathlib import Path
+from typing import Callable, Optional
 
 import mne
 import numpy as np
@@ -38,8 +39,8 @@ def read_mne_data( # noqa: PLR0913,PLR0912
     pick_channels: str | list = "eeg",
     reference: str | None = None,
     bids_parameters: dict = {},
+    preprocessing_fn: Optional[Callable] = None,
     dtype: DTypeLike = np.float32,
-    preprocessing_path: str | None = None,
 ) -> xr.Dataset:
     """Read EEG/MEG data format (.fif or .bdf) using MNE's integrated function.
 
@@ -100,10 +101,14 @@ def read_mne_data( # noqa: PLR0913,PLR0912
         or provide a list of channel names.
     reference : str, optional
         Reference to use for EEG data. If None, the existing reference is kept.
+    bids_parameters: dict, optional
+        Bids root path ('root'), datatype ('datatype") to analyze.
+        A filter can also be applied to subjects, tasks and sessions
+    preprocessing_fn: callable, optional
+        A user defined function preprocessing the raw data before epoching
     dtype: np.DTypeLike
         Precision, use np.float32 or np.int64
-    preprocessing_path: str
-        Path to user-specified preprocessing script, applies on Raw or BIDS data type
+
     Returns
     -------
     epoch_data : xarray.Dataset
@@ -167,7 +172,7 @@ def read_mne_data( # noqa: PLR0913,PLR0912
                             low_pass,
                             pick_channels,
                             bids_parameters,
-                            preprocessing_path)
+                            preprocessing_fn)
         else:
             raise ValueError(f"Unknown data type {data_format}, should be 'epochs', 'raw' or "
                              "'bids'")
@@ -323,7 +328,7 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
     low_pass,
     pick_channels,
     bids_parameters,
-    preprocessing_path
+    preprocessing_fn
 ):
     if Path(participant).suffix == ".fif":
         data = mne.io.read_raw_fif(participant, preload=True, verbose=verbose)
@@ -403,9 +408,8 @@ def read_raw_and_epoch(  # noqa # Should probably be refactored.
     if verbose:
         print(f"Creating epochs based on following event ID :{np.unique(events[:, 2])}")
 
-    if preprocessing_path: 
-        run_preprocessing_script(preprocessing_path)
-        data = preprocessing_code(data, events)
+    if preprocessing_fn is not None:
+        data = preprocessing_fn(data)
 
     if metadata is None:
         metadata_i, meta_events, event_id = mne.epochs.make_metadata(
@@ -550,9 +554,3 @@ def save_eventprobs_csv(estimates, filename):
     estimates = estimates.unstack()
     estimates.to_dataframe('eventprobs').to_csv(filename)
     print(f"Saved at {filename}")
-
-def run_preprocessing_script(preprocessing_path: str):
-    """Execute a preprocessing script on BIDS data."""
-    with open(preprocessing_path, "r") as f: 
-        preprocessing_code = f.read()
-    exec(preprocessing_code, globals())
