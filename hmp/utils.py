@@ -290,8 +290,11 @@ def centered_activity(
         data = (
             data.stack({'trial':['participant','epoch']})
             .data
-            .drop_duplicates("trial")
         )
+    mask = ~data.isel(sample=0, channel=0).squeeze().isnull()
+    data = data.sel(trial=data.trial.values[mask])
+
+
     common_trial = np.intersect1d(
         times["trial"].values, data["trial"].values
     )
@@ -434,8 +437,13 @@ def condition_selection_epoch(epoch_data, condition_string, variable="event", me
         Subset of transformed_data.
     """
     if len(epoch_data.dims) == 4:
-        stacked_epoch_data = epoch_data.stack(trial=("participant", "epoch")).dropna(
-            "trial", how="all"
+        stacked_epoch_data = epoch_data.stack(trial=("participant", "epoch"))
+        mask = ~stacked_epoch_data.data.isel(sample=0, channel=0).squeeze().isnull()
+        stacked_epoch_data = stacked_epoch_data.sel(trial=stacked_epoch_data.trial.values[mask])
+    else:
+        raise ValueError(
+            "Unexpected data object. Expected an xarray dataset with dimensions:"
+            "participant, epoch, channel, sample"
         )
 
     if method == "equal":
