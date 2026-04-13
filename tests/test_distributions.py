@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 from scipy.stats import gamma, lognorm, invgauss, weibull_min
 from scipy.special import gamma as gamma_func
-from hmp.distributions import Gamma, Lognorm, Wald, Weibull
+from hmp.distributions import Gamma, Lognormal, Wald, Weibull
 
 @pytest.mark.parametrize("shape, scale, expected_mean", [
     (2, 3, 6),
@@ -25,7 +25,7 @@ def test_gamma_mean_to_scale(shape, mean, expected_scale):
     (0.5, np.log(2), np.exp(np.log(2) + (0.5**2 / 2))),
 ])
 def test_lognorm_scale_to_mean(shape, scale, expected_mean):
-    dist = Lognorm(shape)
+    dist = Lognormal(shape)
     assert dist.scale_to_mean(scale) == pytest.approx(expected_mean)
 
 @pytest.mark.parametrize("shape, mean, expected_scale", [
@@ -33,7 +33,7 @@ def test_lognorm_scale_to_mean(shape, scale, expected_mean):
     (0.5, np.exp(2), np.exp(np.log(np.exp(2)) - (0.5**2 / 2))),
 ])
 def test_lognorm_mean_to_scale(shape, mean, expected_scale):
-    dist = Lognorm(shape)
+    dist = Lognormal(shape)
     assert dist.mean_to_scale(mean) == pytest.approx(expected_scale)
 
 @pytest.mark.parametrize("shape, scale, expected_mean", [
