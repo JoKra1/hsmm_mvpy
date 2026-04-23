@@ -34,12 +34,12 @@ def test_cumulative_simple():
     true_loglikelihood, true_estimates = true_model.transform(trial_data_b)
 
     # Cumulative estimation
-    model = CumulativeMethod(event_properties, by_sample=True, end=20)
+    model = CumulativeMethod(event_properties, fastforward=False, end=20)
     model.fit(trial_data_b)
     estimates = model.transform(trial_data_b)
 
     # testing if bacward identifies the 3 real events
-    assert np.isclose(model.final_model.channel_pars, true_model.channel_pars, atol=2).all()
+    assert np.isclose(model.submodels[-1].channel_pars, true_model.channel_pars, atol=2).all()
 
     # testing recovery of attributes
     assert isinstance(model.xrlikelihoods, xr.DataArray)
