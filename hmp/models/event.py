@@ -8,9 +8,10 @@ hidden multivariate pattern models.
 import itertools
 import multiprocessing as mp
 from itertools import product
-from warnings import resetwarnings, warn
+from warnings import resetwarnings, warn, catch_warnings, simplefilter
 
 import numpy as np
+import scipy as scp
 import xarray as xr
 from pandas import MultiIndex
 
@@ -93,6 +94,7 @@ class EventModel(BaseModel):
         channel_map: np.ndarray = None,
         time_map: np.ndarray = None,
         grouping_dict: dict = None,
+        estim_shape: bool = False,
     ):
         """
         Fit HMP for a single n_events model.
@@ -132,6 +134,9 @@ class EventModel(BaseModel):
             Dictionary defining groups for grouping modeling. Keys are group names,
             and values are lists of groups.
             Default is None.
+        estim_shape : bool, optional
+            A bool indicating whether to also estimate the shape parameter of the state sojourn
+            time distributions. Defaults to False
 
         Returns
         -------
@@ -253,6 +258,7 @@ class EventModel(BaseModel):
                 itertools.repeat(time_map),
                 itertools.repeat(groups),
                 itertools.repeat(1),
+                itertools.repeat(estim_shape),
             )
             with mp.Pool(processes=cpus) as pool:
                 if self.starting_points > 1:
@@ -278,6 +284,7 @@ class EventModel(BaseModel):
                         time_map,
                         groups,
                         1,
+                        estim_shape,
                     )
                 )
             resetwarnings()
@@ -451,6 +458,7 @@ class EventModel(BaseModel):
         time_map: np.ndarray = None,
         groups: np.ndarray = None,
         cpus: int = 1,
+        estim_shape: bool = False,
     ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Fit using expectation maximization.
@@ -484,6 +492,9 @@ class EventModel(BaseModel):
             Array indicating the groups for grouping modeling. Default is None.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        estim_shape : bool, optional
+            A bool indicating whether to also estimate the shape parameter of the state sojourn
+            time distributions. Defaults to False
 
         Returns
         -------
@@ -534,7 +545,9 @@ class EventModel(BaseModel):
                         trial_data,
                         eventprobs.values[:, :np.max(trial_data.durations[epochs_group]),
                                           channel_map_group],
+                        time_pars[cur_group, time_map_group, :],  # Current t pars
                         subset_epochs=epochs_group,
+                        estim_shape=estim_shape,
                 )
                 channel_pars[cur_group, channel_map_group, :] = c_par
                 time_pars[cur_group, time_map_group, :] = t_par
@@ -582,7 +595,9 @@ class EventModel(BaseModel):
         self,
         trial_data: TrialData,
         eventprobs: np.ndarray,
-        subset_epochs: list[int] = None
+        time_pars: np.ndarray,
+        subset_epochs: list[int] = None,
+        estim_shape: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute the channel and time parameters using the expectation step.
@@ -594,8 +609,14 @@ class EventModel(BaseModel):
         eventprobs : np.ndarray
             A 3D array of shape (n_trials, max_duration, n_events) containing the event
             probabilities.
+        time_pars : np.ndarray
+            A 2D array of shape (n_stages, n_parameters) containing current estimates for
+            stage duration distribution parameters.
         subset_epochs : list[int], optional
             A list of trial indices to consider for the computation. If None, all trials are used.
+        estim_shape : bool, optional
+            A bool indicating whether to also estimate the shape parameter of the state sojourn
+            time distributions. Defaults to False
 
         Returns
         -------
@@ -621,17 +642,24 @@ class EventModel(BaseModel):
             # sum by-trial these scaled activation for each transition events
             # average across trial
 
-        # Time parameters from Expectation Eq 10 from 2024 paper
-        # calc averagepos here as mean_d can be group dependent, whereas scale_parameters() assumes
-        # it's general
-        event_times_mean = np.concatenate(
-            [
-                np.arange(np.max(trial_data.durations[subset_epochs])) @ eventprobs[
-                    subset_epochs].mean(axis=0),
-                [np.mean(trial_data.durations[subset_epochs]) - 1],
-            ]
-        )
-        time_pars = self.scale_parameters(averagepos=event_times_mean)
+        if estim_shape:
+            time_pars = self.scale_shape_parameters(trial_data,
+                                                    time_pars,
+                                                    eventprobs,
+                                                    subset_epochs)
+        else:
+            # Time parameters from Expectation Eq 10 from 2024 paper
+            # calc averagepos here as mean_d can be group dependent, whereas scale_parameters()
+            # assumes it's general
+            event_times_mean = np.concatenate(
+                [
+                    np.arange(np.max(trial_data.durations[subset_epochs])) @ eventprobs[
+                        subset_epochs].mean(axis=0),
+                    [np.mean(trial_data.durations[subset_epochs]) - 1],
+                ]
+            )
+            time_pars = self.scale_parameters(averagepos=event_times_mean)
+
         return channel_pars, time_pars
 
     def gen_random_stages(self, n_events: int) -> np.ndarray:
@@ -692,6 +720,184 @@ class EventModel(BaseModel):
         params[:, 1] = np.diff(averagepos, prepend=0)
         params[:, 1] = self.distribution.mean_to_scale(params[:, 1])
         return params
+
+    def estim_d_probs(
+        self,
+        durations: list[int],
+        eventprobs: np.ndarray,
+    ) -> np.ndarray:
+        """This method computes the probability of stage duration for each stage given data and
+        current parameters.
+
+        Alternative output of the E-step of the EM algorithm.
+
+        Parameters
+        ----------
+        durations : list[int]
+            List of trial durations (in samples).
+        eventprobs : np.ndarray
+            A 3D array of shape (n_trials, max_duration, n_events) containing the event
+            probabilities.
+
+        Returns
+        -------
+        np.ndarray
+            A 2D array of shape (max_duration, n_events + 1) holding the probability mass function.
+        """
+        max_duration = np.max(durations)
+        n_events = eventprobs.shape[-1]
+        n_stages = n_events + 1
+
+        pmf_post = np.zeros([max_duration, n_stages], dtype=np.float64)
+
+        # Compute p(tau_n = d | data, theta) where theta are current pars, i.e., the
+        # posterior over the latent states given data and current parameters. We need
+        # this do define the Q-function to be maximized during the M step with respect to
+        # scale and shape parameters of stage sojourn distributions.
+        for stage in range(n_stages):
+
+            for trial, T in zip(range(len(durations)), durations):
+
+                # p(o_{n-1} = t | C, theta) or p(o_{1} = t | C, theta) for this trial
+                ponset = eventprobs[trial, :, (stage-1) if stage > 0 else stage]
+
+                # Deal with censoring. Stage duration cannot exceed RT in current
+                # implementation.
+                # This makes edge cases special:
+                # For first stage probability of stage duration d is just probability
+                # of subsequent event happening at t = d.
+                # For last stage probability of stage duration d is just probability of
+                # previous event happening at t = T - d (with T = RT for that trial)
+
+                if stage == 0:
+                    didx = np.arange(T)
+                    pmf_post[didx, stage] += ponset[didx]
+
+                elif stage == n_stages - 1:
+                    didx = np.arange(T)
+                    pmf_post[np.flip(np.arange(T)), stage] += ponset[didx]
+
+                else:
+                    # Intermediate case, need joint probability of
+                    # \sum_{t=1}^T p(o_{n-1} = t, o_{n} =  t + d | C, theta) =
+                    #   p(tau_n = d| C, theta)
+                    # p(o_{n-1} = t, o_{n} =  t + d | C, theta) =
+                    #   p(o_{n-1} = t | C, theta) * p(o_{n} =  t + d | C, theta)
+                    ponset2 = eventprobs[trial, :, stage]
+                    for t in range(T):
+
+                        # Deal with censoring for intermediate case. Is this correct? Theoretically
+                        # location is already absorbed into the ponset prob, so don't think we have
+                        # to add it to the censoring again here.
+                        didx = np.arange(max_duration)
+                        censor = (didx + 1 + t) < T
+                        didx = didx[censor]
+
+                        if len(didx):
+                            pmf_post[didx, stage] += (ponset[t] * ponset2[didx + 1 + t])
+
+            # Normalize again to ensure valid pmf
+            pmf_post[:, stage] /= np.sum(pmf_post[:, stage])
+
+        return pmf_post
+
+    def scale_shape_parameters(
+        self,
+        trial_data: TrialData,
+        time_pars: np.ndarray,
+        eventprobs: np.ndarray,
+        subset_epochs: list[int] | None = None,
+    ) -> np.ndarray:
+        """This method is used during the re-estimation step in the EM procedure.
+
+        It computes the scale and shape parameters maximizing the Q-function of the EM step;
+        the expectation of the complete log-likelihood taken with respect to the posterior
+        distribution of the latent variables (state durations) given data and current parameters.
+
+        Parameters
+        ----------
+        trial_data : TrialData
+            The trial data containing cross-correlation and event information.
+        time_pars : np.ndarray
+            A 2D array of shape (n_stages, n_parameters) containing current estimates for
+            stage duration distribution parameters.
+        eventprobs : np.ndarray
+            A 3D array of shape (n_trials, max_duration, n_events) containing the event
+            probabilities.
+        subset_epochs : list[int] or None, optional
+            A list of trial indices to consider for the computation. If None, all trials
+            are used. Default is None.
+
+        Returns
+        -------
+        np.ndarray
+            A 2D array where each row contains the new shape and scale parameters
+            for the corresponding event distribution.
+        """
+        durations = trial_data.durations[subset_epochs]
+        max_duration = np.max(durations)
+        n_events = eventprobs.shape[-1]
+        n_stages = n_events + 1
+
+        # Compute p(tau_n = d | data, theta) where theta are current pars, i.e., the
+        # posterior over the latent states given data and current parameters. We need
+        # this do define the Q-function to be maximized during the M step.
+        pmf_post = self.estim_d_probs(durations,
+                                      eventprobs[subset_epochs, :, :],
+                                      )
+
+        # Now M step - can be performed separately per stage
+        new_time_pars = time_pars.copy()
+        for stage in range(n_stages):
+
+            # Define Q function for stage j
+            def Qtauj(theta: np.ndarray) -> float:
+                lshape = theta[0]
+                lscale = theta[1]
+
+                # TODO: There should really be a distribution_lpdf method to get stable
+                # logs.
+                with catch_warnings():
+                    simplefilter("ignore")
+                    lp = np.log(self.distribution_pdf(np.exp(lshape),
+                                                      np.exp(lscale),
+                                                      max_duration))
+
+                    lp[np.isnan(lp)] = 0
+
+                    # Expectation
+                    E = np.sum(pmf_post[:, stage] * lp)
+
+                # Return negative expectation for optim
+                return -E
+
+            # And maximize
+            opt = scp.optimize.minimize(
+                Qtauj,
+                np.log(time_pars[stage, :]),
+                method="L-BFGS-B",
+                options={
+                    "gtol": 0,
+                    "ftol": 1e-7,
+                    "maxcor": 30,
+                    "maxls": 100,
+                    "maxfun": 5000,
+                }
+            )
+
+            # Collect parameter updates if optimization succeeds.
+            if not opt["success"]:
+                warn(
+                    (
+                        "M step step for distribution parameters did not converge! "
+                        f"Message was: {opt['message']}"
+                    )
+                )
+            else:
+                new_time_pars[stage, :] = np.exp(opt["x"])
+
+        return new_time_pars
+
 
     def estim_probs(
         self,
@@ -947,7 +1153,7 @@ class EventModel(BaseModel):
             A 1D array representing the probability mass function for the distribution
             with the given shape and scale parameters, normalized to sum to 1.
         """
-        p = self.distribution.pdf(np.arange(max_duration), shape, scale=scale)
+        p = self.distribution.pdf(np.arange(max_duration)+1, shape, scale=scale)
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
         return p
