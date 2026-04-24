@@ -15,6 +15,7 @@ and store relevant metadata such as template width and censoring location for mo
 procedures.
 """
 from dataclasses import dataclass
+from warnings import warn
 
 import numpy as np
 
@@ -67,6 +68,12 @@ class HalfSine:
             location = int(width / steps)
         else:
             location = int(np.rint(location))
+        if location < width:
+             warn("For n_event > 1, pattern.location should be greater or equal than pattern.width"
+            "(see https://github.com/GWeindel/hmp/issues/262)"
+             f" but received location ({location}) is smaller than"
+             f" but received width ({width})."
+         )
         template = cls._create_template(width_samples, steps, width)
         return cls(sfreq, width_samples, location, template)
 
