@@ -81,6 +81,12 @@ class EventModel(BaseModel):
         self.channel_map = np.zeros((1, self.n_events))
         super().__init__(*args, **kwargs)
 
+        if n_events > 1 and self.pattern.location < self.pattern.width:
+             warn("For n_event > 1, pattern.location must be greater or equal than pattern.width"
+             f" but received pattern.location ({self.pattern.location}) is smaller than"
+             f" but received pattern.width ({self.pattern.width})."
+         )
+
     def fit(  # noqa: PLR0912, PLR0915
         self,
         trial_data: TrialData,
