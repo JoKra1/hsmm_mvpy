@@ -750,8 +750,8 @@ class EventModel(BaseModel):
         durations: list[int],
         eventprobs: np.ndarray,
     ) -> np.ndarray:
-        """This method computes the probability of stage duration for each stage given data and
-        current parameters.
+        """This method computes the probability of stage duration for each stage and each trial
+        given data and current parameters.
 
         Alternative output of the E-step of the EM algorithm.
 
@@ -766,13 +766,15 @@ class EventModel(BaseModel):
         Returns
         -------
         np.ndarray
-            A 2D array of shape (max_duration, n_events + 1) holding the probability mass function.
+            A 3D array of shape (n_trials, max_duration, n_events + 1) holding the probability
+            mass function.
         """
         max_duration = np.max(durations)
         n_events = eventprobs.shape[-1]
         n_stages = n_events + 1
+        n_trials = len(durations)
 
-        pmf_post = np.zeros([max_duration, n_stages], dtype=np.float64)
+        pmf_post = np.zeros([n_trials, max_duration, n_stages], dtype=np.float64)
 
         # Compute p(tau_n = d | data, theta) where theta are current pars, i.e., the
         # posterior over the latent states given data and current parameters. We need
@@ -795,11 +797,11 @@ class EventModel(BaseModel):
 
                 if stage == 0:
                     didx = np.arange(T)
-                    pmf_post[didx, stage] += ponset[didx]
+                    pmf_post[trial, didx, stage] = ponset[didx]
 
                 elif stage == n_stages - 1:
                     didx = np.arange(T)
-                    pmf_post[np.flip(np.arange(T)), stage] += ponset[didx]
+                    pmf_post[trial, np.flip(np.arange(T)), stage] = ponset[didx]
 
                 else:
                     # Intermediate case, need joint probability of
@@ -818,10 +820,10 @@ class EventModel(BaseModel):
                         didx = didx[censor]
 
                         if len(didx):
-                            pmf_post[didx, stage] += (ponset[t] * ponset2[didx + 1 + t])
+                            pmf_post[trial, didx, stage] += (ponset[t] * ponset2[didx + 1 + t])
 
-            # Normalize again to ensure valid pmf
-            pmf_post[:, stage] /= np.sum(pmf_post[:, stage])
+                # Normalize again to ensure numerically valid pmf
+                pmf_post[trial, :, stage] /= np.sum(pmf_post[trial, :, stage])
 
         return pmf_post
 
@@ -890,7 +892,11 @@ class EventModel(BaseModel):
                     lp[np.isnan(lp)] = 0
 
                     # Expectation
-                    E = np.sum(pmf_post[:, stage] * lp)
+                    E = 0
+                    for trial in range(len(durations)):
+
+                        # Compute second sum over d
+                        E += np.sum(pmf_post[trial, :, stage] * lp)
 
                 # Return negative expectation for optim
                 return -E
