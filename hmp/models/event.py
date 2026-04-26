@@ -749,6 +749,7 @@ class EventModel(BaseModel):
         self,
         durations: list[int],
         eventprobs: np.ndarray,
+        location: bool = True,
     ) -> np.ndarray:
         """This method computes the probability of stage duration for each stage and each trial
         given data and current parameters.
@@ -762,6 +763,9 @@ class EventModel(BaseModel):
         eventprobs : np.ndarray
             A 3D array of shape (n_trials, max_duration, n_events) containing the event
             probabilities.
+        location : bool, optional
+            Whether to add a minimum distance between events to avoid event collapse
+            during the expectation-maximization algorithm. Default is True.
 
         Returns
         -------
@@ -773,6 +777,10 @@ class EventModel(BaseModel):
         n_events = eventprobs.shape[-1]
         n_stages = n_events + 1
         n_trials = len(durations)
+
+        locations = np.zeros(n_stages, dtype=int)
+        if location:
+            locations[1:-1] = self.location
 
         pmf_post = np.zeros([n_trials, max_duration, n_stages], dtype=np.float64)
 
@@ -796,12 +804,12 @@ class EventModel(BaseModel):
                 # previous event happening at t = T - d (with T = RT for that trial)
 
                 if stage == 0:
-                    didx = np.arange(T)
+                    didx = np.arange(locations[stage], T)
                     pmf_post[trial, didx, stage] = ponset[didx]
 
                 elif stage == n_stages - 1:
-                    didx = np.arange(T)
-                    pmf_post[trial, np.flip(np.arange(T)), stage] = ponset[didx]
+                    didx = np.arange(locations[stage], T)
+                    pmf_post[trial, didx, stage] = ponset[T - didx - 1]
 
                 else:
                     # Intermediate case, need joint probability of
@@ -810,17 +818,15 @@ class EventModel(BaseModel):
                     # p(o_{n-1} = t, o_{n} =  t + d | C, theta) =
                     #   p(o_{n-1} = t | C, theta) * p(o_{n} =  t + d | C, theta)
                     ponset2 = eventprobs[trial, :, stage]
-                    for t in range(T):
 
-                        # Deal with censoring for intermediate case. Is this correct? Theoretically
-                        # location is already absorbed into the ponset prob, so don't think we have
-                        # to add it to the censoring again here.
-                        didx = np.arange(max_duration)
-                        censor = (didx + 1 + t) < T
-                        didx = didx[censor]
+                    # Loop over possible **offsets** of next event
+                    for end_idx in range(locations[stage], T):
 
-                        if len(didx):
-                            pmf_post[trial, didx, stage] += (ponset[t] * ponset2[didx + 1 + t])
+                        # Deal with censoring up to RT for intermediate case.
+                        didx = np.arange(end_idx - 1, -1, -1)
+
+                        pmf_post[trial, didx, stage] += (ponset2[end_idx] *
+                                                         ponset[:end_idx])
 
                 # Normalize again to ensure numerically valid pmf
                 pmf_post[trial, :, stage] /= np.sum(pmf_post[trial, :, stage])
@@ -833,6 +839,7 @@ class EventModel(BaseModel):
         time_pars: np.ndarray,
         eventprobs: np.ndarray,
         subset_epochs: list[int] | None = None,
+        location: bool = True,
     ) -> np.ndarray:
         """This method is used during the re-estimation step in the EM procedure.
 
@@ -853,6 +860,9 @@ class EventModel(BaseModel):
         subset_epochs : list[int] or None, optional
             A list of trial indices to consider for the computation. If None, all trials
             are used. Default is None.
+        location : bool, optional
+            Whether to add a minimum distance between events to avoid event collapse
+            during the expectation-maximization algorithm. Default is True.
 
         Returns
         -------
@@ -865,11 +875,16 @@ class EventModel(BaseModel):
         n_events = eventprobs.shape[-1]
         n_stages = n_events + 1
 
+        locations = np.zeros(n_stages, dtype=int)
+        if location:
+            locations[1:-1] = self.location
+
         # Compute p(tau_n = d | data, theta) where theta are current pars, i.e., the
         # posterior over the latent states given data and current parameters. We need
         # this do define the Q-function to be maximized during the M step.
         pmf_post = self.estim_d_probs(durations,
                                       eventprobs[subset_epochs, :, :],
+                                      location=location
                                       )
 
         # Now M step - can be performed separately per stage
@@ -887,7 +902,7 @@ class EventModel(BaseModel):
                     simplefilter("ignore")
                     lp = np.log(self.distribution_pdf(np.exp(lshape),
                                                       np.exp(lscale),
-                                                      max_duration))
+                                                      max_duration-locations[stage]))
 
                     lp[np.isnan(lp)] = 0
 
@@ -895,8 +910,9 @@ class EventModel(BaseModel):
                     E = 0
                     for trial in range(len(durations)):
 
-                        # Compute second sum over d
-                        E += np.sum(pmf_post[trial, :, stage] * lp)
+                        # Compute second sum over d. Remember that
+                        # pmf_post[trial, locations[stage], stage] = lp[0]!
+                        E += np.sum(pmf_post[trial, locations[stage]:, stage] * lp)
 
                 # Return negative expectation for optim
                 return -E
@@ -1007,10 +1023,10 @@ class EventModel(BaseModel):
         for stage in range(n_stages):
             pmf[:, stage] = np.concatenate(
                 (
-                    np.repeat(1e-15, locations[stage]),
-                    self.distribution_pdf(time_pars[stage, 0], time_pars[stage, 1], max_duration)[
-                        locations[stage] :
-                    ],
+                    np.repeat(0, locations[stage]),
+                    self.distribution_pdf(time_pars[stage, 0],
+                                          time_pars[stage, 1],
+                                          max_duration - locations[stage]),
                 )
             )
         pmf_b = pmf[:, ::-1]  # Stage reversed gamma pmf, same order as prob_b
