@@ -906,6 +906,7 @@ class EventModel(BaseModel):
                                 np.repeat(1e-15, locations[stage]),
                                 self.distribution_pdf(np.exp(lshape),
                                                       np.exp(lscale),
+                                                      locations[stage],
                                                       max_duration)[locations[stage]:],
                             )
                         )
@@ -1032,6 +1033,7 @@ class EventModel(BaseModel):
                     np.repeat(1e-15, locations[stage]),
                     self.distribution_pdf(time_pars[stage, 0],
                                           time_pars[stage, 1],
+                                          locations[stage],
                                           max_duration)[locations[stage]:],
                 )
             )
@@ -1183,7 +1185,11 @@ class EventModel(BaseModel):
         all_xreventprobs.attrs['event_width'] = self.event_width
         return [np.array(likelihood), all_xreventprobs]
 
-    def distribution_pdf(self, shape: float, scale: float, max_duration: int) -> np.ndarray:
+    def distribution_pdf(self,
+                         shape: float,
+                         scale: float,
+                         location: int,
+                         max_duration: int) -> np.ndarray:
         """
         Return a discretized probability density function (PDF) for a provided scipy distribution.
 
@@ -1196,6 +1202,8 @@ class EventModel(BaseModel):
             The shape parameter of the distribution.
         scale : float
             The scale parameter of the distribution.
+        location: float
+            Optional minimum duration for the between-event time durations.
         max_duration : int
             The maximum duration (range) for which the PDF is computed.
 
@@ -1205,7 +1213,8 @@ class EventModel(BaseModel):
             A 1D array representing the probability mass function for the distribution
             with the given shape and scale parameters, normalized to sum to 1.
         """
-        p = self.distribution.pdf(np.arange(max_duration)+1, shape, scale=scale)
+        offset = 1 if location == 0 else 0
+        p = self.distribution.pdf(np.arange(max_duration) + offset, shape, scale=scale)
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
         return p
