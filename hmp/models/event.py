@@ -900,9 +900,16 @@ class EventModel(BaseModel):
                 # logs.
                 with catch_warnings():
                     simplefilter("ignore")
-                    lp = np.log(self.distribution_pdf(np.exp(lshape),
+
+                    lp = np.log(np.concatenate(
+                            (
+                                np.repeat(1e-15, locations[stage]),
+                                self.distribution_pdf(np.exp(lshape),
                                                       np.exp(lscale),
-                                                      max_duration-locations[stage]))
+                                                      max_duration)[locations[stage]:],
+                            )
+                        )
+                    )
 
                     lp[np.isnan(lp)] = 0
 
@@ -910,9 +917,8 @@ class EventModel(BaseModel):
                     E = 0
                     for trial in range(len(durations)):
 
-                        # Compute second sum over d. Remember that
-                        # pmf_post[trial, locations[stage], stage] = lp[0]!
-                        E += np.sum(pmf_post[trial, locations[stage]:, stage] * lp)
+                        # Compute second sum over d.
+                        E += np.sum(pmf_post[trial, :, stage] * lp)
 
                 # Return negative expectation for optim
                 return -E
@@ -1023,10 +1029,10 @@ class EventModel(BaseModel):
         for stage in range(n_stages):
             pmf[:, stage] = np.concatenate(
                 (
-                    np.repeat(0, locations[stage]),
+                    np.repeat(1e-15, locations[stage]),
                     self.distribution_pdf(time_pars[stage, 0],
                                           time_pars[stage, 1],
-                                          max_duration - locations[stage]),
+                                          max_duration)[locations[stage]:],
                 )
             )
         pmf_b = pmf[:, ::-1]  # Stage reversed gamma pmf, same order as prob_b
