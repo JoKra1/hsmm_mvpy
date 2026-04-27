@@ -823,10 +823,10 @@ class EventModel(BaseModel):
                     for end_idx in range(locations[stage], T):
 
                         # Deal with censoring up to RT for intermediate case.
-                        didx = np.arange(end_idx - 1, -1, -1)
+                        didx = np.arange(end_idx, -1, -1)
 
                         pmf_post[trial, didx, stage] += (ponset2[end_idx] *
-                                                         ponset[:end_idx])
+                                                         ponset[:end_idx+1])
 
                 # Normalize again to ensure numerically valid pmf
                 pmf_post[trial, :, stage] /= np.sum(pmf_post[trial, :, stage])
