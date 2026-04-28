@@ -989,7 +989,7 @@ class EventModel(BaseModel):
             A 1D array representing the probability mass function for the distribution
             with the given shape and scale parameters, normalized to sum to 1.
         """
-        shift = 0 if location > 0 else self.distribution.shift
+        shift = 0 if location >= self.distribution.shift else self.distribution.shift
         p = self.distribution.pdf(np.arange(max_duration) + shift, shape, scale=scale)
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
