@@ -803,12 +803,9 @@ class EventModel(BaseModel):
             pmf[:, stage] = np.concatenate(
                 (
                     np.repeat(0, locations[stage]),
-                    self.distribution_pdf(time_pars[stage, 0],
-                                          time_pars[stage, 1],
-                                          locations[stage],
-                                          max_duration)[
-                                            locations[stage] :
-                                          ],
+                    self.distribution_pdf(time_pars[stage, 0], time_pars[stage, 1], max_duration)[
+                        locations[stage] :
+                    ],
                 )
             )
         pmf_b = pmf[:, ::-1]  # Stage reversed gamma pmf, same order as prob_b
@@ -963,7 +960,6 @@ class EventModel(BaseModel):
         self,
         shape: float,
         scale: float,
-        location: int,
         max_duration: int
     ) -> np.ndarray:
         """
@@ -978,8 +974,6 @@ class EventModel(BaseModel):
             The shape parameter of the distribution.
         scale : float
             The scale parameter of the distribution.
-        location: int
-            A minimum duration assumed for the interval between two events for this distribution.
         max_duration : int
             The maximum duration (range) for which the PDF is computed.
 
@@ -989,7 +983,7 @@ class EventModel(BaseModel):
             A 1D array representing the probability mass function for the distribution
             with the given shape and scale parameters, normalized to sum to 1.
         """
-        shift = 0 if location >= self.distribution.shift else self.distribution.shift
+        shift = self.distribution.shift
         p = self.distribution.pdf(np.arange(max_duration) + shift, shape, scale=scale)
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
