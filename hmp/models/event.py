@@ -751,8 +751,8 @@ class EventModel(BaseModel):
         eventprobs: np.ndarray,
         location: bool = True,
     ) -> np.ndarray:
-        """This method computes the probability of stage duration for each stage and each trial
-        given data and current parameters.
+        """This method computes the probability of peak-2-peak times for each of the n_events + 1
+        intervals and each trial given data and current parameters.
 
         Alternative output of the E-step of the EM algorithm.
 
@@ -775,41 +775,44 @@ class EventModel(BaseModel):
         """
         max_duration = np.max(durations)
         n_events = eventprobs.shape[-1]
-        n_stages = n_events + 1
+        n_intervals = n_events + 1
         n_trials = len(durations)
 
-        locations = np.zeros(n_stages, dtype=int)
+        locations = np.zeros(n_intervals, dtype=int)
         if location:
             locations[1:-1] = self.location
 
-        pmf_post = np.zeros([n_trials, max_duration, n_stages], dtype=np.float64)
+        pmf_post = np.zeros([n_trials, max_duration, n_intervals], dtype=np.float64)
 
-        # Compute p(tau_n = d | data, theta) where theta are current pars, i.e., the
-        # posterior over the latent states given data and current parameters. We need
-        # this do define the Q-function to be maximized during the M step with respect to
-        # scale and shape parameters of stage sojourn distributions.
-        for stage in range(n_stages):
+        # Compute p(tau_n = d | data, theta) where theta are current pars and tau_n is the
+        # peak-2-peak time for interval n, i.e., the posterior over the latent states given data
+        # and current parameters. We need this do define the Q-function to be maximized during the
+        # M step with respect to scale and shape parameters of peak-2-peak time distributions.
+
+        # Loop over intervals
+        for interval in range(n_intervals):
 
             for trial, T in zip(range(len(durations)), durations):
 
                 # p(o_{n-1} = t | C, theta) or p(o_{1} = t | C, theta) for this trial
-                ponset = eventprobs[trial, :, (stage-1) if stage > 0 else stage]
+                # where o_{n-1} is peak time for event n-1
+                ponset = eventprobs[trial, :, (interval-1) if interval > 0 else interval]
 
                 # Deal with censoring. Stage duration cannot exceed RT in current
                 # implementation.
                 # This makes edge cases special:
-                # For first stage probability of stage duration d is just probability
-                # of subsequent event happening at t = d.
-                # For last stage probability of stage duration d is just probability of
-                # previous event happening at t = T - d (with T = RT for that trial)
+                # For first interval probability of interval duration d is just probability
+                # of first event happening at t = d.
+                # For last interval probability of interval duration d is just probability of
+                # last event happening at t = T - d (with T = RT for that trial)
 
-                if stage == 0:
-                    didx = np.arange(locations[stage], T)
-                    pmf_post[trial, didx, stage] = ponset[didx]
+                if interval == 0:
+                    didx = np.arange(T)
+                    pmf_post[trial, didx, interval] = ponset[didx]
 
-                elif stage == n_stages - 1:
-                    didx = np.arange(locations[stage], T)
-                    pmf_post[trial, didx, stage] = ponset[T - didx - 1]
+                elif interval == n_intervals - 1:
+                    didx = np.arange(T)
+                    pmf_post[trial, didx, interval] = ponset[T - didx - 1]
 
                 else:
                     # Intermediate case, need joint probability of
@@ -817,19 +820,19 @@ class EventModel(BaseModel):
                     #   p(tau_n = d| C, theta)
                     # p(o_{n-1} = t, o_{n} =  t + d | C, theta) =
                     #   p(o_{n-1} = t | C, theta) * p(o_{n} =  t + d | C, theta)
-                    ponset2 = eventprobs[trial, :, stage]
+                    ponset2 = eventprobs[trial, :, interval]
 
-                    # Loop over possible **offsets** of next event
-                    for end_idx in range(locations[stage], T):
+                    # Loop over possible peaks of next event
+                    for end_idx in range(T):
 
-                        # Deal with censoring up to RT for intermediate case.
+                        # Deal with censoring at stimulus onset.
                         didx = np.arange(end_idx, -1, -1)
 
-                        pmf_post[trial, didx, stage] += (ponset2[end_idx] *
-                                                         ponset[:end_idx+1])
+                        pmf_post[trial, didx, interval] += (ponset2[end_idx] *
+                                                            ponset[:end_idx+1])
 
                 # Normalize again to ensure numerically valid pmf
-                pmf_post[trial, :, stage] /= np.sum(pmf_post[trial, :, stage])
+                pmf_post[trial, :, interval] /= np.sum(pmf_post[trial, :, interval])
 
         return pmf_post
 
@@ -845,7 +848,7 @@ class EventModel(BaseModel):
 
         It computes the scale and shape parameters maximizing the Q-function of the EM step;
         the expectation of the complete log-likelihood taken with respect to the posterior
-        distribution of the latent variables (state durations) given data and current parameters.
+        distribution of the latent variables (peak-2-peak times) given data and current parameters.
 
         Parameters
         ----------
@@ -873,25 +876,26 @@ class EventModel(BaseModel):
         durations = trial_data.durations[subset_epochs]
         max_duration = np.max(durations)
         n_events = eventprobs.shape[-1]
-        n_stages = n_events + 1
+        n_intervals = n_events + 1
 
-        locations = np.zeros(n_stages, dtype=int)
+        locations = np.zeros(n_intervals, dtype=int)
         if location:
             locations[1:-1] = self.location
 
-        # Compute p(tau_n = d | data, theta) where theta are current pars, i.e., the
-        # posterior over the latent states given data and current parameters. We need
-        # this do define the Q-function to be maximized during the M step.
+        # Compute p(tau_n = d | data, theta) where theta are current pars and tau_n is the
+        # peak-2-peak time for interval n, i.e., the posterior over the latent states given data
+        # and current parameters. We need this do define the Q-function to be maximized during the
+        # M step with respect to scale and shape parameters of peak-2-peak time distributions.
         pmf_post = self.estim_d_probs(durations,
                                       eventprobs[subset_epochs, :, :],
                                       location=location
                                       )
 
-        # Now M step - can be performed separately per stage
+        # Now M step - can be performed separately per interval
         new_time_pars = time_pars.copy()
-        for stage in range(n_stages):
+        for interval in range(n_intervals):
 
-            # Define Q function for stage j
+            # Define Q function for interval j
             def Qtauj(theta: np.ndarray) -> float:
                 lshape = theta[0]
                 lscale = theta[1]
@@ -901,14 +905,12 @@ class EventModel(BaseModel):
                 with catch_warnings():
                     simplefilter("ignore")
 
-                    lp = np.log(np.concatenate(
-                            (
-                                np.repeat(1e-15, locations[stage]),
-                                self.distribution_pdf(np.exp(lshape),
-                                                      np.exp(lscale),
-                                                      locations[stage],
-                                                      max_duration)[locations[stage]:],
-                            )
+                    lp = np.log(
+                        (
+                            self.distribution_pdf(np.exp(lshape),
+                                                  np.exp(lscale),
+                                                  locations[interval],
+                                                  max_duration),
                         )
                     )
 
@@ -919,7 +921,7 @@ class EventModel(BaseModel):
                     for trial in range(len(durations)):
 
                         # Compute second sum over d.
-                        E += np.sum(pmf_post[trial, :, stage] * lp)
+                        E += np.sum(pmf_post[trial, :, interval] * lp)
 
                 # Return negative expectation for optim
                 return -E
@@ -927,7 +929,7 @@ class EventModel(BaseModel):
             # And maximize
             opt = scp.optimize.minimize(
                 Qtauj,
-                np.log(time_pars[stage, :]),
+                np.log(time_pars[interval, :]),
                 method="L-BFGS-B",
                 options={
                     "gtol": 0,
@@ -942,12 +944,12 @@ class EventModel(BaseModel):
             if not opt["success"]:
                 warn(
                     (
-                        "M step step for distribution parameters did not converge! "
-                        f"Message was: {opt['message']}"
+                        f"M step step for distribution parameters of interval {interval} "
+                        f"did not converge! Message was: {opt['message']}"
                     )
                 )
             else:
-                new_time_pars[stage, :] = np.exp(opt["x"])
+                new_time_pars[interval, :] = np.exp(opt["x"])
 
         return new_time_pars
 
@@ -1213,7 +1215,7 @@ class EventModel(BaseModel):
             A 1D array representing the probability mass function for the distribution
             with the given shape and scale parameters, normalized to sum to 1.
         """
-        offset = 1 if location == 0 else 0
+        offset = 1
         p = self.distribution.pdf(np.arange(max_duration) + offset, shape, scale=scale)
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
