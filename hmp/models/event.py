@@ -530,6 +530,10 @@ class EventModel(BaseModel):
             # As long as new run gives better likelihood, go on
             lkh_prev = lkh.copy()
 
+            # Storage for step-length control
+            new_channel_pars = channel_pars.copy()
+            new_time_pars = time_pars.copy()
+
             for cur_group in data_groups:  # get params/c_pars
                 channel_map_group = np.where(channel_map[cur_group, :] >= 0)[0]
                 time_map_group = np.where(time_map[cur_group, :] >= 0)[0]
@@ -542,13 +546,13 @@ class EventModel(BaseModel):
                                           channel_map_group],
                         subset_epochs=epochs_group,
                 )
-                channel_pars[cur_group, channel_map_group, :] = c_par
-                time_pars[cur_group, time_map_group, :] = t_par
+                new_channel_pars[cur_group, channel_map_group, :] = c_par
+                new_time_pars[cur_group, time_map_group, :] = t_par
 
-                channel_pars[cur_group, fixed_channel_pars, :] = initial_channel_pars[
+                new_channel_pars[cur_group, fixed_channel_pars, :] = initial_channel_pars[
                     cur_group, fixed_channel_pars, :
                 ].copy()
-                time_pars[cur_group, fixed_time_pars, :] = initial_time_pars[
+                new_time_pars[cur_group, fixed_time_pars, :] = initial_time_pars[
                     cur_group, fixed_time_pars, :
                 ].copy()
 
@@ -556,22 +560,43 @@ class EventModel(BaseModel):
             for m in range(self.n_events):
                 for m_set in np.unique(channel_map[:, m]):
                     if m_set >= 0:
-                        channel_pars[channel_map[:, m] == m_set, m, :] = np.mean(
-                            channel_pars[channel_map[:, m] == m_set, m, :], axis=0
+                        new_channel_pars[channel_map[:, m] == m_set, m, :] = np.mean(
+                            new_channel_pars[channel_map[:, m] == m_set, m, :], axis=0
                         )
 
             # set param to mean if requested in map
             for p in range(self.n_events + 1):
                 for p_set in np.unique(time_map[:, p]):
                     if p_set >= 0:
-                        time_pars[time_map[:, p] == p_set, p, :] = np.mean(
-                            time_pars[time_map[:, p] == p_set, p, :], axis=0
+                        new_time_pars[time_map[:, p] == p_set, p, :] = np.mean(
+                            new_time_pars[time_map[:, p] == p_set, p, :], axis=0
                         )
 
+            # Step length control to ensure parameter updates result in valid llk
+            for icor in range(31):
 
-            lkh, eventprobs = self._distribute_groups(
-                trial_data, channel_pars, time_pars, channel_map, time_map, groups, cpus=cpus
-            )
+                if icor == 30:  # just reset
+                    new_channel_pars = channel_pars
+                    new_time_pars = time_pars
+
+                # Compute llk under new parameters
+                lkh, eventprobs = self._distribute_groups(
+                    trial_data, new_channel_pars, new_time_pars,
+                    channel_map, time_map, groups, cpus=cpus
+                )
+
+                # Half step in case the llk is ill-defined
+                if np.isneginf(lkh.sum()):
+                    new_channel_pars = (new_channel_pars + channel_pars)/2
+                    new_time_pars = (new_time_pars + time_pars)/2
+                else:
+                    # Accept step
+                    break
+
+            # Accept new parameters
+            time_pars = new_time_pars
+            channel_pars = new_channel_pars
+
             traces.append(lkh)
             time_pars_dev.append(time_pars.copy())
             i += 1
@@ -777,10 +802,13 @@ class EventModel(BaseModel):
         for stage in range(n_stages):
             pmf[:, stage] = np.concatenate(
                 (
-                    np.repeat(1e-15, locations[stage]),
-                    self.distribution_pdf(time_pars[stage, 0], time_pars[stage, 1], max_duration)[
-                        locations[stage] :
-                    ],
+                    np.repeat(0, locations[stage]),
+                    self.distribution_pdf(time_pars[stage, 0],
+                                          time_pars[stage, 1],
+                                          locations[stage],
+                                          max_duration)[
+                                            locations[stage] :
+                                          ],
                 )
             )
         pmf_b = pmf[:, ::-1]  # Stage reversed gamma pmf, same order as prob_b
@@ -931,7 +959,13 @@ class EventModel(BaseModel):
         all_xreventprobs.attrs['event_width'] = self.event_width
         return [np.array(likelihood), all_xreventprobs]
 
-    def distribution_pdf(self, shape: float, scale: float, max_duration: int) -> np.ndarray:
+    def distribution_pdf(
+        self,
+        shape: float,
+        scale: float,
+        location: int,
+        max_duration: int
+    ) -> np.ndarray:
         """
         Return a discretized probability density function (PDF) for a provided scipy distribution.
 
@@ -944,6 +978,8 @@ class EventModel(BaseModel):
             The shape parameter of the distribution.
         scale : float
             The scale parameter of the distribution.
+        location: int
+            A minimum duration assumed for the interval between two events for this distribution.
         max_duration : int
             The maximum duration (range) for which the PDF is computed.
 
@@ -953,7 +989,8 @@ class EventModel(BaseModel):
             A 1D array representing the probability mass function for the distribution
             with the given shape and scale parameters, normalized to sum to 1.
         """
-        p = self.distribution.pdf(np.arange(max_duration), shape, scale=scale)
+        shift = 0 if location > 0 else self.distribution.shift
+        p = self.distribution.pdf(np.arange(max_duration) + shift, shape, scale=scale)
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
         return p
