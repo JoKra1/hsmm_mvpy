@@ -99,6 +99,7 @@ class EventModel(BaseModel):
         channel_map: np.ndarray = None,
         time_map: np.ndarray = None,
         grouping_dict: dict = None,
+        n_cor: int = 30,
     ):
         """
         Fit HMP for a single n_events model.
@@ -138,6 +139,11 @@ class EventModel(BaseModel):
             Dictionary defining groups for grouping modeling. Keys are group names,
             and values are lists of groups.
             Default is None.
+        n_cor: int, optional
+            In case the log-likelihood becomes invalid after completing a parameter update the
+            update vector will be halved for a maximum of ``n_cor`` times to try and recover
+            a valid update before giving up and falling back to the parameter estimates from the
+            previous iteration.
 
         Returns
         -------
@@ -259,6 +265,7 @@ class EventModel(BaseModel):
                 itertools.repeat(time_map),
                 itertools.repeat(groups),
                 itertools.repeat(1),
+                itertools.repeat(n_cor),
             )
             with mp.Pool(processes=cpus) as pool:
                 if self.starting_points > 1:
@@ -284,6 +291,7 @@ class EventModel(BaseModel):
                         time_map,
                         groups,
                         1,
+                        n_cor,
                     )
                 )
             resetwarnings()
@@ -457,6 +465,7 @@ class EventModel(BaseModel):
         time_map: np.ndarray = None,
         groups: np.ndarray = None,
         cpus: int = 1,
+        n_cor: int = 30,
     ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Fit using expectation maximization.
@@ -490,6 +499,11 @@ class EventModel(BaseModel):
             Array indicating the groups for grouping modeling. Default is None.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        n_cor: int, optional
+            In case the log-likelihood becomes invalid after completing the M step, the parameter
+            update vector will be halved for a maximum of ``n_cor`` times to try and recover
+            a valid update before giving up and falling back to the parameter estimates from the
+            previous iteration.
 
         Returns
         -------
@@ -573,9 +587,15 @@ class EventModel(BaseModel):
                         )
 
             # Step length control to ensure parameter updates result in valid llk
-            for icor in range(31):
+            for icor in range(n_cor + 1):
 
-                if icor == 30:  # just reset
+                if icor == n_cor:  # just reset
+                    warn(
+                        f"M step failed, after {n_cor} step halvings. ",
+                        "Falling back to previous parameter estimates.",
+                        RuntimeWarning,
+                    )
+
                     new_channel_pars = channel_pars
                     new_time_pars = time_pars
 
