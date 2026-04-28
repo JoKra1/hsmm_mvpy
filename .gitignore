@@ -18,3 +18,5 @@ __pycache__/
 tutorials/sample_data/eeg/*_raw.fif
 hmp/_version.py
 .coverage
+*.fif
+*.npy
