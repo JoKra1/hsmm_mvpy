@@ -586,8 +586,10 @@ class EventModel(BaseModel):
 
                 if icor == n_cor:  # just reset
                     warn(
-                        f"M step failed, after {n_cor} step halvings. ",
-                        "Falling back to previous parameter estimates.",
+                        (
+                            "M step failed, after step halvings. "
+                            "Falling back to previous parameter estimates."
+                        ),
                         RuntimeWarning,
                     )
 
@@ -600,6 +602,10 @@ class EventModel(BaseModel):
                         trial_data, new_channel_pars, new_time_pars,
                         channel_map, time_map, groups, cpus=cpus
                     )
+                
+                # Stop if no update
+                if np.isclose((new_time_pars - time_pars).sum(), 0):
+                    break
 
                 # Half step in case the llk is ill-defined
                 if np.isneginf(lkh.sum()):
@@ -861,6 +867,7 @@ class EventModel(BaseModel):
             np.log(eventprobs[:, :, 0].sum(axis=0))
         )  # sum over max_samples to avoid 0s in log
         eventprobs = eventprobs / eventprobs.sum(axis=0)
+        eventprobs[np.isnan(eventprobs)] = 0
         eventprobs = eventprobs.transpose((1,0,2))
         return [likelihood, eventprobs]
 
