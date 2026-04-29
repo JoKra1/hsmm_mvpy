@@ -95,23 +95,25 @@ class CumulativeMethod(BaseModel):
         self.trial_data = trial_data
         end = trial_data.durations.mean() if self.end is None else self.end
         self.step = self.location if self.step is None else self.step
+        #stop when not possible to insert event
+        end = int(np.rint((end - self.location*2)/self.step))
 
-        pbar = tqdm(total=int(np.rint(end/self.step+1)))  # progress bar
+        pbar = tqdm(total=end)  # progress bar
         n_events, j = 1, 1 # j = sample after last placed event
 
         # final time parameters during estimation, shape x scale
-        time_pars = np.zeros((int(end/self.step), 2))
+        time_pars = np.zeros((end, 2))
         time_pars[:, 0] = self.distribution.shape
 
         # Initialize last stage of n=1
         time_pars[0, 1] = self.distribution.mean_to_scale(trial_data.durations.mean())
 
         # final channel_pars during estimation
-        channel_pars = np.zeros((int(end/self.step), trial_data.n_dims))
+        channel_pars = np.zeros((end, trial_data.n_dims))
         lkh_prev = -np.inf
 
         # Iterative fit
-        while j*self.step < end:
+        while j < end:
             prev_j = j
             event_model = EventModel(self.pattern, self.distribution, tolerance=self.tolerance,
                                      n_events=n_events)
@@ -163,7 +165,7 @@ class CumulativeMethod(BaseModel):
             else:
                 j += 1
             pbar.update(int(np.rint(j-prev_j)))
-        pbar.update(int(np.rint(end/self.step -j)))
+        pbar.update(int(np.rint(end -j)+1))
 
         # done estimating
         n_events = n_events - 1
@@ -228,11 +230,6 @@ class CumulativeMethod(BaseModel):
             # Add a neutral event as new proposition
             channel_pars_props = np.zeros((1, n_events, channel_pars.shape[-1]))
             channel_pars_props[:, :n_events-1, :] = channel_pars[:n_events-1]
-
-        # Ensures non-negative time parameters, exclusively (?) happening for last
-        # sample when step > remainder
-        time_pars_props[:, 1] = np.maximum(time_pars_props[:, 1],
-                                           self.distribution.mean_to_scale(1))
 
         return channel_pars_props, np.array([time_pars_props])
 
