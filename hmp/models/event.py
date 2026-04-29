@@ -602,7 +602,7 @@ class EventModel(BaseModel):
                         trial_data, new_channel_pars, new_time_pars,
                         channel_map, time_map, groups, cpus=cpus
                     )
-                
+
                 # Stop if no update
                 if np.isclose((new_time_pars - time_pars).sum(), 0):
                     break
