@@ -595,10 +595,11 @@ class EventModel(BaseModel):
                     new_time_pars = time_pars
 
                 # Compute llk under new parameters
-                lkh, eventprobs = self._distribute_groups(
-                    trial_data, new_channel_pars, new_time_pars,
-                    channel_map, time_map, groups, cpus=cpus
-                )
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    lkh, eventprobs = self._distribute_groups(
+                        trial_data, new_channel_pars, new_time_pars,
+                        channel_map, time_map, groups, cpus=cpus
+                    )
 
                 # Half step in case the llk is ill-defined
                 if np.isneginf(lkh.sum()):
