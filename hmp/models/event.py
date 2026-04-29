@@ -1008,8 +1008,8 @@ class EventModel(BaseModel):
         """
         shift = self.distribution.shift
         p = self.distribution.pdf(np.arange(max_duration) + shift, shape, scale=scale)
-        p = p / np.sum(p)
         p[:shift] = 0 # PR-270
+        p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
         return p
 
