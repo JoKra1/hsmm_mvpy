@@ -298,18 +298,18 @@ class EventModel(BaseModel):
             max_lkhs = 0
 
         if np.isneginf(lkhs.sum()):
-            raise ValueError("Fit failed, inspect provided starting points")
-        else:
-            self._fitted = True
-            self.lkhs = lkhs[max_lkhs]
-            self.channel_pars =  np.array(estimates[max_lkhs][1])
-            self.time_pars = np.array(estimates[max_lkhs][2])
-            self.traces = np.array(estimates[max_lkhs][3])
-            self.time_pars_dev = np.array(estimates[max_lkhs][4])
-            self.grouping_dict = grouping_dict
-            self.group = groups
-            self.channel_map = channel_map
-            self.time_map = time_map
+            warn("Fit failed, inspect provided starting points")
+
+        self._fitted = True
+        self.lkhs = lkhs[max_lkhs]
+        self.channel_pars =  np.array(estimates[max_lkhs][1])
+        self.time_pars = np.array(estimates[max_lkhs][2])
+        self.traces = np.array(estimates[max_lkhs][3])
+        self.time_pars_dev = np.array(estimates[max_lkhs][4])
+        self.grouping_dict = grouping_dict
+        self.group = groups
+        self.channel_map = channel_map
+        self.time_map = time_map
 
     def transform(self, trial_data: TrialData) -> tuple[np.ndarray, xr.DataArray]:
         """
@@ -1007,7 +1007,7 @@ class EventModel(BaseModel):
             with the given shape and scale parameters, normalized to sum to 1.
         """
         shift = self.distribution.shift
-        p = self.distribution.pdf(np.arange(max_duration) + shift, shape, scale=scale)
+        p = self.distribution.pdf(np.arange(max_duration), shape, scale=scale)
         p[:shift] = 0 # PR-270
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
