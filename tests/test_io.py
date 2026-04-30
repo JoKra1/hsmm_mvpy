@@ -23,6 +23,8 @@ DATA_DIR = Path("tests", "gen_data")
 DATA_DIR_A = DATA_DIR / "dataset_a"
 DATA_DIR_B = DATA_DIR / "dataset_b"
 DATA_DIR_C = DATA_DIR / "dataset_c"
+DATA_DIR_D = DATA_DIR / "dataset_d"
+
 
 def init_data():
     # Also tests data_format 'raw'
@@ -41,7 +43,7 @@ def init_data():
     event_b = events[1]
     # Data reading
     epoch_data = io.read_mne_data(raws, event_id=event_id, resp_id=resp_id, sfreq=sfreq, pick_channels='eeg',
-            events_provided=events, verbose=True, subj_name=['a','b'], tmin=-.01)
+            events_provided=events, verbose=True, subj_name=['a','b'], tmin=-.01, tmax=1)
     epoch_data = epoch_data.assign_coords({'condition': ('participant', epoch_data.participant.data)})
     # subsample channels for speed
     epoch_data = epoch_data.sel(channel=epoch_data.channel[::3])
@@ -63,11 +65,34 @@ def init_data_large():
     event_c = events[0]
     # Data reading
     epoch_data = io.read_mne_data(raws, event_id=event_id, resp_id=resp_id, sfreq=sfreq, pick_channels='eeg',
-            events_provided=events, verbose=True, subj_name=['c'], tmin=-.01)
+            events_provided=events, verbose=True, subj_name=['c'], tmin=-.01, tmax=1)
     epoch_data = epoch_data.assign_coords({'condition': ('participant', epoch_data.participant.data)})
     info = simulations.sim_info()
     return event_c, epoch_data, info, sfreq, n_events
 
+def init_data_short():
+    # events separated by a very short interval to trigger invalid LL
+    """ Initialize all data and model related info."""
+    sfreq = 100
+    n_events = 3
+    events = []
+    event_id = {'stimulus':1}#trigger 1 = stimulus
+    resp_id = {'response':5}
+    raws = [DATA_DIR_D / 'dataset_d_raw_raw.fif']
+    event_files = [DATA_DIR_D / 'dataset_d_raw_raw_generating_events.npy']
+    for file in event_files:
+        events.append(np.load(file))
+    event_d = events[0]
+    # Data reading
+    epoch_data = io.read_mne_data(raws, event_id=event_id, resp_id=resp_id, sfreq=sfreq, pick_channels='eeg',
+            events_provided=events, verbose=True, subj_name=['d'], tmin=-.01, tmax=1)
+    epoch_data = epoch_data.assign_coords({'condition': ('participant', epoch_data.participant.data)})
+    # subsample channels for speed
+    epoch_data = epoch_data.sel(channel=epoch_data.channel[::10])
+    positions = simulations.positions()[::10]
+    return event_d, epoch_data, positions, sfreq, n_events
+
+    
 def test_epochs():
     # Declaring path where the EEG data will be stored
     epoch_data_path = os.path.join('sample_data', 'eeg')

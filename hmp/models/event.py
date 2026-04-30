@@ -79,6 +79,7 @@ class EventModel(BaseModel):
         self.grouping_dict = {}
         self.time_map = np.zeros((1, self.n_events + 1))
         self.channel_map = np.zeros((1, self.n_events))
+        self.n_cor = 30
         super().__init__(*args, **kwargs)
 
         if n_events > 1 and self.pattern.location < self.pattern.width:
@@ -99,7 +100,6 @@ class EventModel(BaseModel):
         channel_map: np.ndarray = None,
         time_map: np.ndarray = None,
         grouping_dict: dict = None,
-        n_cor: int = 30,
     ):
         """
         Fit HMP for a single n_events model.
@@ -139,11 +139,6 @@ class EventModel(BaseModel):
             Dictionary defining groups for grouping modeling. Keys are group names,
             and values are lists of groups.
             Default is None.
-        n_cor: int, optional
-            In case the log-likelihood becomes invalid after completing a parameter update the
-            update vector will be halved for a maximum of ``n_cor`` times to try and recover
-            a valid update before giving up and falling back to the parameter estimates from the
-            previous iteration.
 
         Returns
         -------
@@ -265,7 +260,7 @@ class EventModel(BaseModel):
                 itertools.repeat(time_map),
                 itertools.repeat(groups),
                 itertools.repeat(1),
-                itertools.repeat(n_cor),
+                itertools.repeat(self.n_cor),
             )
             with mp.Pool(processes=cpus) as pool:
                 if self.starting_points > 1:
@@ -291,7 +286,7 @@ class EventModel(BaseModel):
                         time_map,
                         groups,
                         1,
-                        n_cor,
+                        self.n_cor,
                     )
                 )
             resetwarnings()
@@ -303,18 +298,18 @@ class EventModel(BaseModel):
             max_lkhs = 0
 
         if np.isneginf(lkhs.sum()):
-            raise ValueError("Fit failed, inspect provided starting points")
-        else:
-            self._fitted = True
-            self.lkhs = lkhs[max_lkhs]
-            self.channel_pars =  np.array(estimates[max_lkhs][1])
-            self.time_pars = np.array(estimates[max_lkhs][2])
-            self.traces = np.array(estimates[max_lkhs][3])
-            self.time_pars_dev = np.array(estimates[max_lkhs][4])
-            self.grouping_dict = grouping_dict
-            self.group = groups
-            self.channel_map = channel_map
-            self.time_map = time_map
+            warn("Fit failed, inspect provided starting points")
+
+        self._fitted = True
+        self.lkhs = lkhs[max_lkhs]
+        self.channel_pars =  np.array(estimates[max_lkhs][1])
+        self.time_pars = np.array(estimates[max_lkhs][2])
+        self.traces = np.array(estimates[max_lkhs][3])
+        self.time_pars_dev = np.array(estimates[max_lkhs][4])
+        self.grouping_dict = grouping_dict
+        self.group = groups
+        self.channel_map = channel_map
+        self.time_map = time_map
 
     def transform(self, trial_data: TrialData) -> tuple[np.ndarray, xr.DataArray]:
         """
@@ -591,8 +586,10 @@ class EventModel(BaseModel):
 
                 if icor == n_cor:  # just reset
                     warn(
-                        f"M step failed, after {n_cor} step halvings. ",
-                        "Falling back to previous parameter estimates.",
+                        (
+                            "M step failed, after step halvings. "
+                            "Falling back to previous parameter estimates."
+                        ),
                         RuntimeWarning,
                     )
 
@@ -600,10 +597,15 @@ class EventModel(BaseModel):
                     new_time_pars = time_pars
 
                 # Compute llk under new parameters
-                lkh, eventprobs = self._distribute_groups(
-                    trial_data, new_channel_pars, new_time_pars,
-                    channel_map, time_map, groups, cpus=cpus
-                )
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    lkh, eventprobs = self._distribute_groups(
+                        trial_data, new_channel_pars, new_time_pars,
+                        channel_map, time_map, groups, cpus=cpus
+                    )
+
+                # Stop if no update
+                if np.isclose((new_time_pars - time_pars).sum(), 0):
+                    break
 
                 # Half step in case the llk is ill-defined
                 if np.isneginf(lkh.sum()):
@@ -865,6 +867,7 @@ class EventModel(BaseModel):
             np.log(eventprobs[:, :, 0].sum(axis=0))
         )  # sum over max_samples to avoid 0s in log
         eventprobs = eventprobs / eventprobs.sum(axis=0)
+        eventprobs[np.isnan(eventprobs)] = 0
         eventprobs = eventprobs.transpose((1,0,2))
         return [likelihood, eventprobs]
 
@@ -1004,7 +1007,8 @@ class EventModel(BaseModel):
             with the given shape and scale parameters, normalized to sum to 1.
         """
         shift = self.distribution.shift
-        p = self.distribution.pdf(np.arange(max_duration) + shift, shape, scale=scale)
+        p = self.distribution.pdf(np.arange(max_duration), shape, scale=scale)
+        p[:shift] = 0 # PR-270
         p = p / np.sum(p)
         p[np.isnan(p)] = 0  # remove potential nans
         return p
