@@ -82,9 +82,10 @@ class EventModel(BaseModel):
         self.channel_map = np.zeros((1, self.n_events))
         self.n_cor = 30
         self.semi_parametric = False
+        self.spmfs = None
         self.init_spmfs = None
         self.smooth_spmfs = True
-        self.smooth_spmfs_lam = 100
+        self.smooth_spmfs_lam = 200
         super().__init__(*args, **kwargs)
 
         if n_events > 1 and self.pattern.location < self.pattern.width:
@@ -197,20 +198,12 @@ class EventModel(BaseModel):
             fixed_channel_pars = self.fixed_channel_pars
             infos_to_store["fixed_channel_pars"] = fixed_channel_pars
 
-        spmfs = self.init_spmfs
         if time_pars is None:
             # If no time parameters starting points are provided generate standard ones
             # Or random ones if starting_points > 1
             time_pars = (
                 np.zeros((n_groups, self.n_events + 1, 2)) * np.nan
             )  # by default nan for missing stages
-
-            if self.semi_parametric and self.init_spmfs is None:
-                # Initialize storage for semi-parametric pmf estimates
-                max_durations = np.max(trial_data.durations)
-                spmfs = (
-                    np.zeros((n_groups, self.n_events + 1, max_durations))
-                )
 
             for cur_group in range(n_groups):
                 time_group = np.where(time_map[cur_group, :] >= 0)[0]
@@ -227,18 +220,9 @@ class EventModel(BaseModel):
                     ],
                     (n_stage_group, 1),
                 )
-                if self.semi_parametric and self.init_spmfs is None:
-                    # Initialize spmf
-                    spmfs[cur_group,time_group,:] = np.tile(
-                        self.distribution_pdf(init_shape,init_scale,max_durations),
-                        (n_stage_group, 1),
-                    )
 
             initial_p = time_pars
             time_pars = [initial_p]
-            if self.semi_parametric and self.init_spmfs is None:
-                initial_spmfs = spmfs
-                spmfs = [initial_spmfs]
             if self.starting_points > 1:
                 if self.max_scale is None:
                     raise ValueError(
@@ -251,10 +235,6 @@ class EventModel(BaseModel):
                         np.zeros((n_groups, self.n_events + 1, 2)) * np.nan
                     )  # by default nan for missing stages
 
-                    if self.semi_parametric and self.init_spmfs is None:
-                        proposal_spmf = (
-                            np.zeros((n_groups, self.n_events + 1, max_durations))
-                        )
                     for cur_group in range(n_groups):
                         time_group = np.where(time_map[cur_group, :] >= 0)[0]
                         n_stage_group = len(time_group)
@@ -262,20 +242,58 @@ class EventModel(BaseModel):
                         proposal_p[cur_group, time_group, :] = proposal_time_pars
                         proposal_p[cur_group, fixed_time_pars, :] = initial_p[0, fixed_time_pars]
 
-                        if self.semi_parametric and self.init_spmfs is None:
-                            for idx,interval in enumerate(time_group):
-                                proposal_spmf[cur_group,interval,:] = self.distribution_pdf(
-                                    proposal_time_pars[idx][0],
-                                    proposal_time_pars[idx][1],
-                                    max_durations)
-
-
                     time_pars.append(proposal_p)
-                    if self.semi_parametric and self.init_spmfs is None:
-                        spmfs.append(spmfs)
                 time_pars = np.array(time_pars)
         else:
             infos_to_store["sp_time_pars"] = time_pars
+        
+        spmfs = self.init_spmfs
+        if self.semi_parametric and self.init_spmfs is None:
+
+            # Initialize storage for semi-parametric pmf estimates
+            max_durations = np.max(trial_data.durations)
+            spmfs = (
+                np.zeros((n_groups, self.n_events + 1, max_durations))
+            )
+
+            for cur_group in range(n_groups):
+                time_group = np.where(time_map[cur_group, :] >= 0)[0]
+                n_stage_group = len(time_group)
+                # by default starting point is to split the average duration in equal bins
+                init_shape = self.distribution.shape
+                init_scale = self.distribution.mean_to_scale(
+                            np.mean(trial_data.durations[groups == cur_group]) / (n_stage_group)
+                        )
+
+                if self.semi_parametric and self.init_spmfs is None:
+                    # Initialize spmf
+                    spmfs[cur_group,time_group,:] = np.tile(
+                        self.distribution_pdf(init_shape,init_scale,max_durations),
+                        (n_stage_group, 1),
+                    )
+            
+            initial_spmfs = spmfs
+            spmfs = [initial_spmfs]
+            if self.starting_points > 1:
+
+                for _ in np.arange(self.starting_points):
+                    proposal_spmf = (
+                        np.zeros((n_groups, self.n_events + 1, max_durations))
+                        )
+                    for cur_group in range(n_groups):
+                        time_group = np.where(time_map[cur_group, :] >= 0)[0]
+                        n_stage_group = len(time_group)
+                        proposal_time_pars = self.gen_random_stages( n_stage_group - 1)
+
+                        for idx,interval in enumerate(time_group):
+                            proposal_spmf[cur_group,interval,:] = self.distribution_pdf(
+                                proposal_time_pars[idx][0],
+                                proposal_time_pars[idx][1],
+                                max_durations)
+
+
+                    spmfs.append(proposal_spmf)
+                spmfs = np.array(spmfs)
 
         if channel_pars is None:
             # By defaults c_pars are initiated to 0
@@ -354,8 +372,6 @@ class EventModel(BaseModel):
         self.time_pars_dev = np.array(estimates[max_lkhs][4])
         if self.semi_parametric:
             self.spmfs = np.array(estimates[max_lkhs][5])
-        else:
-            self.spmfs = None
         self.grouping_dict = grouping_dict
         self.group = groups
         self.channel_map = channel_map
@@ -590,8 +606,7 @@ class EventModel(BaseModel):
 
             if i >= min_iteration and (
                 np.isneginf(lkh.sum()) or \
-                tolerance > (lkh.sum() - lkh_prev.sum()) / np.abs(lkh_prev.sum()) or
-                (self.semi_parametric and (np.abs(prev_spmf - spmf).max() < 0.001))
+                tolerance > (lkh.sum() - lkh_prev.sum()) / np.abs(lkh_prev.sum())
             ):
                 break
 
@@ -642,6 +657,7 @@ class EventModel(BaseModel):
                                                         new_spmf_pars,
                                                         lam=self.smooth_spmfs_lam)
                             new_spmf_pars = spl(np.arange(max_group_durations))
+                            new_spmf_pars[new_spmf_pars < 0] = 0
                             new_spmf_pars /= np.sum(new_spmf_pars)
 
                         new_spmf[cur_group,
