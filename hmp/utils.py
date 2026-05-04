@@ -24,6 +24,10 @@ def _check_transformed(transformed):
                              "in hmp.transformers")
     return data
 
+def _check_sf_consistency(epoch_data, estimates):
+    if epoch_data.sfreq != estimates.sfreq:
+        raise ValueError("Inconsistent sampling frequency between epoch data and estimates")
+
 def event_times(  # noqa: PLR0912
     estimates,
     duration=False,
@@ -145,7 +149,7 @@ def event_times(  # noqa: PLR0912
 
 def event_channels(
     epoch_data,
-    estimated,
+    estimates,
     mean=True,
     peak=True,
     estimate_method="max",
@@ -157,7 +161,7 @@ def event_channels(
     ----------
         epoch_data: xr.Dataset
             Epoched data
-        estimated: xr.Dataset
+        estimates: xr.Dataset
             estimated model parameters and event probabilities
         mean: bool
             if True mean will be computed instead of single-trial channel activities
@@ -176,6 +180,7 @@ def event_channels(
             array containing the values of each electrode at the most likely transition time
             contains nans for missing events
     """
+    _check_sf_consistency(epoch_data, estimates)
     if estimate_method is None:
         estimate_method = "max"
     epoch_data = (
@@ -185,18 +190,18 @@ def event_channels(
     )
 
     common_trial = np.intersect1d(
-        estimated["trial"].values, epoch_data["trial"].values
+        estimates["trial"].values, epoch_data["trial"].values
     )
-    epoch_data = epoch_data.sel(trial=common_trial, sample=estimated.sample)
-    estimated = estimated.sel(trial=common_trial)
-    n_events = estimated.event.count().values
-    n_trial = estimated.trial.count().values
+    epoch_data = epoch_data.sel(trial=common_trial, sample=estimates.sample)
+    estimates = estimates.sel(trial=common_trial)
+    n_events = estimates.event.count().values
+    n_trial = estimates.trial.count().values
     n_channel = epoch_data.channel.count().values
 
     if not peak:
         normed_template = template / np.sum(template)
 
-    times = event_times(estimated, mean=False, estimate_method=estimate_method,)
+    times = event_times(estimates, mean=False, estimate_method=estimate_method,)
     times = times.sel(trial=common_trial)
     event_values = np.zeros((n_channel, n_trial, n_events))*np.nan
     for ev in range(n_events):
@@ -218,8 +223,8 @@ def event_channels(
             "event",
         ],
         coords={
-            "trial": estimated.trial,
-            "event": estimated.event,
+            "trial": estimates.trial,
+            "event": estimates.event,
             "channel": epoch_data.channel,
         },
     )
@@ -251,7 +256,7 @@ def centered_activity(
     data : xr.Dataset
         HMP data (untransformed but with trial and participant stacked)
     times : xr.DataArray
-        Onset times as computed using onset_times()
+        Onset times in sample as computed using event_times()
     channel : list
         channel to pick for the parsing of the signal, must be a list even if only one
     event : int
@@ -287,7 +292,6 @@ def centered_activity(
 
     n_samples = np.rint(n_samples)
     baseline = np.rint(baseline)
-
     if 'epoch' in data.dims:
         data = (
             data.stack({'trial':['participant','epoch']})
