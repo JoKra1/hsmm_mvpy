@@ -363,10 +363,13 @@ def centered_activity(
         end_idx = int(times.sel(event=event, trial=trial) + upper_lim)
         trial_elec = trial_dat.sel(channel=channel, sample=slice(start_idx, end_idx))\
             .squeeze("trial")
-        # If center, adjust to always center on the same sample if lower_lim < baseline
-        baseline_adjusted_start = int(abs(baseline - lower_lim))
-        baseline_adjusted_end = baseline_adjusted_start + trial_elec.shape[-1]
-        trial_time_arr = slice(baseline_adjusted_start, baseline_adjusted_end)
+        # If requested bsl or n_samples exceed epoch window
+        offshoot_bsl = start_idx - trial_elec.sample[0].values
+        offshoot_epo = end_idx - trial_elec.sample[-1].values
+        # If center, adjust to always center on the same sample if lower_lim > baseline
+        start_idx_data = int(lower_lim - baseline - offshoot_bsl)
+        end_idx_data = int(upper_lim - baseline + 1 - offshoot_epo)
+        trial_time_arr = slice(start_idx_data, end_idx_data)
 
         centered_data[i, :, trial_time_arr] = trial_elec
         trial_times[i] = times.sel(event=event, trial=trial)
