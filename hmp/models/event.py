@@ -332,7 +332,7 @@ class EventModel(BaseModel):
             )
         likelihoods, xreventprobs = self._distribute_groups(
             trial_data, self.channel_pars, self.time_pars,
-            self.channel_map, self.time_map, groups, False
+            self.channel_map, self.time_map, groups, True
         )
         return likelihoods, xreventprobs
 
