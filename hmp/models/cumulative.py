@@ -36,8 +36,8 @@ class CumulativeMethod(BaseModel):
     end : int, optional
         The maximum number of samples to explore within each trial. Defaults to None.
     sequential: bool
-        Testing new starting point solely starting from the last detected event (True, default).
-        If False, iteratively test all samples from 0 to `end`, retain times at
+        Testing new starting point solely starting from the last detected event (False, default).
+        If True, iteratively test all samples from 0 to `end`, retain times at
         which likelihood increased regardless of whether a subsequent event was found.
     fastforward : bool, optional
         If True when proposal got rejected, start again with the furthest time point explored with previous
@@ -108,7 +108,7 @@ class CumulativeMethod(BaseModel):
         self.step = self.location if self.step is None else self.step
         max_n_events = self.compute_max_events(trial_data) if self.max_n_events is None else self.max_n_events
         #stop when not possible to insert event
-        end = int(np.rint((end - self.location*2)/self.step))
+        end = int(np.rint((end - self.location)/self.step))
 
         pbar = tqdm(total=end)  # progress bar
         n_events, j = 1, 1 # j = sample after last placed event
@@ -130,7 +130,7 @@ class CumulativeMethod(BaseModel):
             lkh_prev, _ = self.base_fit.transform(trial_data)
 
         # Iterative fit
-        while j < end and n_events <= max_n_events + 1:
+        while j < end and n_events <= max_n_events:
             prev_j = j
             event_model = EventModel(self.pattern, self.distribution, tolerance=self.tolerance,
                                      n_events=n_events)
@@ -170,8 +170,9 @@ class CumulativeMethod(BaseModel):
                     )
                 # Search for additional event
                 n_events += 1
-                j += 1
-            elif self.fastforward and self.distribution.mean_to_scale(j*self.step) > np.sum(time_pars[:n_events-2, 1]):
+                if self.sequential:
+                    j += 1
+            elif self.fastforward:
                 # If ffwd, the next sample tested follows the max explored time for the last event
                 max_scale = np.max(
                     [np.sum(x[0, :n_events-1, 1]) for x in event_model.time_pars_dev]
@@ -210,7 +211,7 @@ class CumulativeMethod(BaseModel):
     def _propose_fit_params(self, n_events, j, channel_pars, time_pars):
 
         if (
-            not self.sequential and n_events > 1
+            self.sequential and n_events > 1
         ):  # go through the whole range sample-by-sample, j is sample since start
             scale_j = self.distribution.mean_to_scale(self.step * j)
 
@@ -241,8 +242,7 @@ class CumulativeMethod(BaseModel):
             channel_pars_props = np.insert(
                 channel_pars_props[:, :-1, :], n_event_j - 1, channel_pars_props[:, -1, :], axis=1
             )
-            time_pars_props[:, 1] = np.maximum(time_pars_props[:, 1],
-                                   self.distribution.mean_to_scale(self.location))
+
             j = self.distribution.scale_to_mean(np.sum(time_pars_props[:n_event_j, 1]))/self.step
         else:
             time_pars_props = time_pars[: n_events + 1].copy()
@@ -254,13 +254,13 @@ class CumulativeMethod(BaseModel):
             time_pars_props[n_events-1, 1] = new_event_prop
             # Subtract new proposition from last stage
             time_pars_props[-1, 1] -= new_event_prop
-
             # Add a neutral event as new proposition
             channel_pars_props = np.zeros((1, n_events, channel_pars.shape[-1]))
             channel_pars_props[:, :n_events-1, :] = channel_pars[:n_events-1]
-            time_pars_props[:, 1] = np.maximum(time_pars_props[:, 1],
-                                   self.distribution.mean_to_scale(self.location))
             j = self.distribution.scale_to_mean(np.sum(time_pars_props[:n_events, 1]))/self.step
+        
+        time_pars_props[:, 1] = np.maximum(time_pars_props[:, 1],
+                               self.distribution.mean_to_scale(1))
 
         return j, channel_pars_props, np.array([time_pars_props])
 
