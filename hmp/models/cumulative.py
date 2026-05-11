@@ -36,9 +36,9 @@ class CumulativeMethod(BaseModel):
     end : int, optional
         The maximum number of samples to explore within each trial. Defaults to None.
     sequential: bool
-        Testing new starting point solely starting from the last detected event (False, default).
-        If True, iteratively test all samples from 0 to `end`, retain times at
+        If True (Default), iteratively test all samples from 0 to `end`, retain times at
         which likelihood increased regardless of whether a subsequent event was found.
+        If False, Testing new starting point solely starting from the last detected event.
     fastforward : bool, optional
         If True when proposal got rejected, start again with the furthest time point explored with previous
         proposition.
