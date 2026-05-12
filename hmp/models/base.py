@@ -50,7 +50,7 @@ class BaseModel(ABC):
 
     def compute_max_events(self, trial_data: TrialData):
         """Compute the maximum possible number of events given location and minimum duration."""
-        return int(np.rint(np.min(trial_data.durations) // (self.location)))
+        return int(np.rint(np.min(trial_data.durations) // (self.location))) + 1
 
 
     def __getattribute__(self, attr):
