@@ -13,6 +13,7 @@ from scipy.stats import gamma
 from hmp.io import read_mne_data
 from hmp.models.event import EventModel
 from hmp.trialdata import TrialData
+from hmp.utils import _define_random_state
 
 root = os.path.dirname(os.path.abspath(__file__))
 
@@ -132,10 +133,7 @@ def simulate(  # noqa  # Might need to be refactored.
         mne.set_log_level("warning")
     else:
         mne.set_log_level(True)
-    if seed is not None:
-        random_state = np.random.RandomState(seed)
-    else:
-        random_state = np.random.RandomState(np.random.randint(low=0, high=3000))
+    random_state = _define_random_state(seed)
     sources = np.array(sources, dtype=object)
     if len(np.shape(sources)) == 2:
         sources = [sources]  # If only one subject
@@ -539,9 +537,9 @@ def simulated_times_and_parameters(
     true_time_pars[true_time_pars[:, 1] <= 0, 1] = 1e-3  # Can happen in corner cases
     random_source_times = random_source_times * (1000 / sfreq) / (1000 / resampling_freq)
     ## Recover magnitudes
-    sample_times = np.zeros((trial_data.n_trials, n_events), dtype=int)
+    sample_times = np.zeros((len(trial_data.starts), n_events), dtype=int)
     for event in range(n_events):
-        for trial in range(trial_data.n_trials):
+        for trial in range(len(trial_data.starts)):
             trial_time = trial_data.starts[trial] + np.sum(random_source_times[trial, : event + 1])
             if trial_data.ends[trial] >= trial_time:  # exceeds RT
                 sample_times[trial, event] = trial_time

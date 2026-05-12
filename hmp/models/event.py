@@ -150,7 +150,7 @@ class EventModel(BaseModel):
         infos_to_store["event_width"] = self.event_width
         infos_to_store["tolerance"] = self.tolerance
 
-        self.n_dims = trial_data.n_dims
+        self.n_dims = trial_data.cross_corr.shape[1]
 
         if grouping_dict is None:
             grouping_dict = self.grouping_dict
@@ -206,7 +206,7 @@ class EventModel(BaseModel):
                     [
                         self.distribution.shape,
                         self.distribution.mean_to_scale(
-                            np.mean(trial_data.durations[groups == cur_group]) / (n_stage_group)
+                        np.mean(trial_data.durations.values[groups == cur_group]) / (n_stage_group)
                         ),
                     ],
                     (n_stage_group, 1),
@@ -237,7 +237,7 @@ class EventModel(BaseModel):
 
         if channel_pars is None:
             # By defaults c_pars are initiated to 0
-            channel_pars = np.zeros((n_groups, self.n_events, self.n_dims), dtype=np.float64)
+            channel_pars = np.zeros((n_groups, self.n_events, self.n_dims), dtype=np.float32)
             if (channel_map < 0).any():  # set missing c_pars to nan
                 for cur_group in range(n_groups):
                     channel_pars[cur_group, np.where(channel_map[cur_group, :] < 0)[0], :] = np.nan
@@ -494,7 +494,7 @@ class EventModel(BaseModel):
             Array indicating the groups for grouping modeling. Default is None.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
-        n_cor: int, optional
+        n_cor : int, optional
             In case the log-likelihood becomes invalid after completing the M step, the parameter
             update vector will be halved for a maximum of ``n_cor`` times to try and recover
             a valid update before giving up and falling back to the parameter estimates from the
@@ -503,15 +503,15 @@ class EventModel(BaseModel):
         Returns
         -------
         lkh : float
-        Summed log probabilities.
+            Summed log probabilities.
         channel_pars : np.ndarray
-        Estimated channel contributions for each event.
+            Estimated channel contributions for each event.
         time_pars : np.ndarray
-        Estimated time distribution parameters for each stage.
+            Estimated time distribution parameters for each stage.
         traces : np.ndarray
-        Log-likelihood values for each EM iteration.
+            Log-likelihood values for each EM iteration.
         time_pars_dev : np.ndarray
-        Time parameters for each iteration of the EM algorithm.
+            Time parameters for each iteration of the EM algorithm.
         """
         assert channel_map.shape[0] == time_map.shape[0], (
             "Both maps need to indicate the same number of groups."
@@ -551,7 +551,7 @@ class EventModel(BaseModel):
                 # get c_pars/t_pars by group
                 c_par, t_par = self.get_channel_time_parameters_expectation(
                         trial_data,
-                        eventprobs.values[:, :np.max(trial_data.durations[epochs_group]),
+                        eventprobs.values[:, :np.max(trial_data.durations.values[epochs_group]),
                                           channel_map_group],
                         subset_epochs=epochs_group,
                 )
@@ -662,7 +662,7 @@ class EventModel(BaseModel):
         for event in range(eventprobs.shape[2]):
             for comp in range(self.n_dims):
                 event_data = np.zeros((len(subset_epochs),
-                                       np.max(trial_data.durations[subset_epochs])))
+                                       np.max(trial_data.durations.values[subset_epochs])))
                 for trial_idx, trial in enumerate(subset_epochs):
                     start, end = trial_data.starts[trial], trial_data.ends[trial]
                     duration = end - start + 1
@@ -679,9 +679,9 @@ class EventModel(BaseModel):
         # it's general
         event_times_mean = np.concatenate(
             [
-                np.arange(np.max(trial_data.durations[subset_epochs])) @ eventprobs[
+                np.arange(np.max(trial_data.durations.values[subset_epochs])) @ eventprobs[
                     subset_epochs].mean(axis=0),
-                [np.mean(trial_data.durations[subset_epochs]) - 1],
+                [np.mean(trial_data.durations.values[subset_epochs]) - 1],
             ]
         )
         time_pars = self.scale_parameters(averagepos=event_times_mean)
@@ -740,7 +740,7 @@ class EventModel(BaseModel):
             A 2D array where each row contains the shape and scale parameters
             for the corresponding event distribution.
         """
-        params = np.zeros((len(averagepos), 2), dtype=np.float64)
+        params = np.zeros((len(averagepos), 2), dtype=np.float32)
         params[:, 0] = self.distribution.shape
         params[:, 1] = np.diff(averagepos, prepend=0)
         params[:, 1] = self.distribution.mean_to_scale(params[:, 1])
@@ -790,37 +790,42 @@ class EventModel(BaseModel):
         if location:
             locations[1:-1] = self.location
         if subset_epochs is not None:
-            if len(subset_epochs) == trial_data.n_trials:  # boolean indices
+            if len(subset_epochs) == len(trial_data.starts):  # boolean indices
                 subset_epochs = np.where(subset_epochs)[0]
         n_trials = len(subset_epochs)
-        durations = trial_data.durations[subset_epochs]
         starts = trial_data.starts[subset_epochs]
         ends = trial_data.ends[subset_epochs]
+        durations = ends - starts + 1
+        cross_corr = np.vstack(
+                [trial_data.cross_corr[s:e+1] for s, e in zip(starts, ends)]
+        )
+        dtype = trial_data.cross_corr.dtype
         max_duration = np.max(durations)
-        gains = np.zeros((trial_data.n_samples, n_events), dtype=np.float64)
-        for i in range(trial_data.n_dims):
+        gains = np.zeros((cross_corr.shape[0], n_events), dtype=dtype)
+        for i in range(cross_corr.shape[1]):
             # computes the gains, i.e. congruence between the pattern shape
             # and the data given the magnitudes of the sensors
             gains = (
                 gains
-                + trial_data.cross_corr[:, i][np.newaxis].T * channel_pars[:, i]
+                + cross_corr[:, i][np.newaxis].T * channel_pars[:, i]
                 - channel_pars[:, i] ** 2 / 2
             )
         gains = np.exp(gains)
-        probs = np.zeros([max_duration, n_trials, n_events], dtype=np.float64)  # prob per trial
+        probs = np.zeros([max_duration, n_trials, n_events], dtype=dtype)  # prob per trial
         probs_b = np.zeros(
-            [max_duration, n_trials, n_events], dtype=np.float64
+            [max_duration, n_trials, n_events], dtype=dtype
         )  # Sample and state reversed
+
+        trial_slice = np.cumsum(durations)
         for trial in np.arange(n_trials):
             # Following assigns gain per trial to variable probs
-            probs[: durations[trial], trial, :] = gains[starts[trial] : ends[trial] + 1, :]
+            probs[: durations[trial], trial, :] = gains[trial_slice[trial] - durations[trial]\
+                    : trial_slice[trial], :]
             # Same but sample and events are reversed, this allows to compute
             # fwd and bwd in the same way in the following steps
-            probs_b[: durations[trial], trial, :] = gains[starts[trial] : ends[trial] + 1, :][
-                ::-1, ::-1
-            ]
+            probs_b[: durations[trial], trial, :] = probs[: durations[trial], trial, :][::-1, ::-1]
 
-        pmf = np.zeros([max_duration, n_stages], dtype=np.float64)  # Gamma pmf for each stage scale
+        pmf = np.zeros([max_duration, n_stages], dtype=dtype)  # Gamma pmf for each stage scale
         for stage in range(n_stages):
             pmf[:, stage] = np.concatenate(
                 (
@@ -832,8 +837,8 @@ class EventModel(BaseModel):
             )
         pmf_b = pmf[:, ::-1]  # Stage reversed gamma pmf, same order as prob_b
 
-        forward = np.zeros((max_duration, n_trials, n_events), dtype=np.float64)
-        backward = np.zeros((max_duration, n_trials, n_events), dtype=np.float64)
+        forward = np.zeros((max_duration, n_trials, n_events), dtype=dtype)
+        backward = np.zeros((max_duration, n_trials, n_events), dtype=dtype)
         # Computing forward and backward helper variable
         #  when stage = 0:
         forward[:, :, 0] = (
@@ -958,8 +963,8 @@ class EventModel(BaseModel):
         likelihood = np.array([x[0] for x in likes_events_group])
 
         for i, cur_group in enumerate(data_groups):
-            part = trial_data.xrdurations.coords["participant"].values[(groups == cur_group)]
-            epoch = trial_data.xrdurations.coords["epoch"].values[(groups == cur_group)]
+            part = trial_data.durations.coords["participant"].values[(groups == cur_group)]
+            epoch = trial_data.durations.coords["epoch"].values[(groups == cur_group)]
             data_events =  channel_map[cur_group, :] >= 0
             trial_x_part = xr.Coordinates.from_pandas_multiindex(
                 MultiIndex.from_arrays([part, epoch], names=("participant", "epoch")),
@@ -1059,7 +1064,7 @@ class EventModel(BaseModel):
         for group, mod in grouping_dict.items():
             group_names.append(group)
             group_mods.append(mod)
-            group_trials.append(trial_data.xrdurations.coords[group])
+            group_trials.append(trial_data.durations.coords[group])
             if verbose:
                 print('group "' + group_names[-1] + '" analyzed, with groups:', group_mods[-1])
 
@@ -1081,7 +1086,7 @@ class EventModel(BaseModel):
                 if verbose:
                     print(str(i) + ": " + str(mod))
         else:
-            groups = np.zeros(trial_data.n_trials)
+            groups = np.zeros(len(trial_data.starts))
         groups = np.int8(groups)
         glabels = {"group " + str(group_names): group_mods}
 

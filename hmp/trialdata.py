@@ -1,6 +1,5 @@
 """Builds the data to be used in HMP model estimation."""
 from dataclasses import dataclass
-from functools import cached_property
 
 import numpy as np
 import xarray as xr
@@ -17,32 +16,29 @@ class TrialData:
 
     Attributes
     ----------
-    xrdurations : xr.DataArray
+    durations : xr.DataArray
         Durations of each trial with corresponding trial coordinates.
     starts : np.ndarray
         Array of start indices for each trial (usually stimulus onsets position in samples).
     ends : np.ndarray
         Array of end indices for each trial (usually response onsets position in samples)
-    n_trials : int
-        Total number of trials.
-    n_samples : int
-        Total number of samples across all trials.
     sfreq : float
         Sampling frequency of the data.
     offset : int
         Offset applied to the data.
+    pattern : np.ndarray
+        Values for the pattern used for the cross-correlation.
     cross_corr : np.ndarray
         Cross-correlation values between the data and a given pattern.
     """
 
-    xrdurations: xr.DataArray
+    durations: xr.DataArray
     starts: np.ndarray
     ends: np.ndarray
-    n_trials: int
-    n_samples: int
     sfreq: float
     offset: int
     cross_corr: np.ndarray
+    pattern: np.ndarray
 
 
     @classmethod
@@ -74,47 +70,30 @@ class TrialData:
             .count(dim="sample")
             .cumsum()
             .squeeze()
-        )
+        ).dropna("trial")
 
-        dur_dropped_na = durations.dropna("trial")
-        starts = np.roll(dur_dropped_na.data, 1)
+        starts = np.roll(durations.data, 1)
         starts[0] = 0
-        ends = dur_dropped_na.data - 1
-        xrdurations = durations.dropna("trial") - durations.dropna(
-            "trial"
-        ).shift(trial=1, fill_value=0)
+        ends = durations.data - 1
+        durations -= durations.shift(trial=1, fill_value=0)
 
-        n_trials = durations.trial.count().values
         metadata = (data.sel(component=0, sample=0).sel().drop_vars(['component', 'sample']))
         metadata = {k: v for k, v in metadata.coords.items() if k not in metadata.dims}
         for name, coord in metadata.items():
-            if name not in xrdurations.coords:
-                xrdurations = xrdurations.assign_coords({name: coord})
+            if name not in durations.coords:
+                durations = durations.assign_coords({name: coord})
         data = data.unstack().stack(all_samples=['participant','epoch','sample']).\
             dropna(dim="all_samples")
-        n_dims, n_samples = data.shape
         # Equation 1 in 2024 paper
-        cross_corr = cross_correlation(data.values.T, n_trials, n_dims, starts, ends, pattern,
+        cross_corr = cross_correlation(data.values.T, starts, ends, pattern,
                                        dtype)
 
-
-
-        return cls(xrdurations=xrdurations, starts=starts, ends=ends,
-                   n_trials=n_trials, n_samples=n_samples, cross_corr=cross_corr,
+        return cls(durations=durations, starts=starts, ends=ends,
+                    cross_corr=cross_corr, pattern=pattern,
                    offset=data.offset, sfreq=data.sfreq)
-
-    @cached_property
-    def durations(self):
-        return self.ends - self.starts + 1
-
-    @property
-    def n_dims(self):
-        return self.cross_corr.shape[1]
 
 def cross_correlation(
         data: np.ndarray,
-        n_trials: int,
-        n_dims: int,
         starts: np.ndarray,
         ends: np.ndarray,
         pattern: np.ndarray,
@@ -129,8 +108,6 @@ def cross_correlation(
     ----------
     data : np.ndarray
         2D ndarray with shape (n_samples, n_components).
-    n_trials : int
-        Number of trials in the data.
     n_dims : int
         Number of dimensions (components) in the data.
     starts : np.ndarray
@@ -149,8 +126,8 @@ def cross_correlation(
         the correlation value with the given pattern.
     """
     events = np.zeros(data.shape, dtype=dtype)
-    for trial in range(n_trials):  # avoids confusion of gains between trial
-        for dim in np.arange(n_dims):
+    for trial in range(len(starts)):  # avoids confusion of gains between trial
+        for dim in np.arange(data.shape[1]):
             events[starts[trial] : ends[trial] + 1, dim] = correlate(
                 data[starts[trial] : ends[trial] + 1, dim],
                 pattern,

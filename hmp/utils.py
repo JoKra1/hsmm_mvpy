@@ -523,3 +523,10 @@ def compute_csd(epoch_data: xr.Dataset,
     else:
         raise ValueError(f"Cannot apply CSD on channels with units {info['chs'][0]['unit']}")
     return epoch_data, eeg_info
+
+def _define_random_state(seed=None):
+    if seed is not None:
+        random_state = np.random.RandomState(seed)
+    else:
+        random_state = np.random.RandomState(np.random.randint(low=0, high=3000))
+    return random_state
