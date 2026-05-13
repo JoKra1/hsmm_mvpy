@@ -104,7 +104,7 @@ class CumulativeMethod(BaseModel):
         -------
         None
         """
-        end = trial_data.durations.mean() if self.end is None else self.end
+        end = trial_data.durations.values.mean() if self.end is None else self.end
         self.step = self.location if self.step is None else self.step
         max_n_events = self.compute_max_events(trial_data) if self.max_n_events is None\
             else self.max_n_events
@@ -117,12 +117,12 @@ class CumulativeMethod(BaseModel):
         # final time/chan parameters
         time_pars = np.zeros((end, 2))
         time_pars[:, 0] = self.distribution.shape
-        channel_pars = np.zeros((end, trial_data.n_dims))
+        channel_pars = np.zeros((end, trial_data.cross_corr.shape[1]))
 
         if self.base_fit is None:
             # Initialize last stage of n=1
-            time_pars[0, 1] = self.distribution.mean_to_scale(trial_data.durations.mean())
-            channel_pars = np.zeros((end, trial_data.n_dims))
+            time_pars[0, 1] = self.distribution.mean_to_scale(trial_data.durations.values.mean())
+            channel_pars = np.zeros((end, trial_data.cross_corr.shape[1]))
             lkh_prev = -np.inf
         else:
             n_events = self.base_fit.n_events+1
