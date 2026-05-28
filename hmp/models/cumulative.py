@@ -3,7 +3,9 @@
 from warnings import warn
 
 import numpy as np
+from joblib import Parallel, delayed
 
+from hmp.crossvalidation import pseudo_kfold
 from hmp.models.base import BaseModel
 from hmp.models.event import EventModel
 from hmp.trialdata import TrialData
@@ -13,9 +15,6 @@ try:
     from tqdm.notebook import tqdm
 except NameError:
     from tqdm import tqdm
-
-default_colors = ["cornflowerblue", "indianred", "orange", "darkblue", "darkgreen", "gold", "brown"]
-
 
 class CumulativeMethod(BaseModel):
     """Initialize the CumulativeMethod.
@@ -81,7 +80,9 @@ class CumulativeMethod(BaseModel):
         self,
         trial_data: TrialData,
         verbose: bool = True,
+        kfold: int = 1,
         cpus: int = 1,
+
     ) -> None:
         """
         Fit the model starting with a 1-event model and iteratively add events.
@@ -99,6 +100,9 @@ class CumulativeMethod(BaseModel):
             If True, provides detailed output about the fitting process. Defaults to True.
         cpus : int, optional
             The number of CPU cores to use for computation. Defaults to 1.
+        kfold: float
+            Number of folds in a k-fold scheme to use for the estimation of new events. If kfold > 1
+            performs crossvalidation on deterministically shuffled data.
 
         Returns
         -------
@@ -117,53 +121,46 @@ class CumulativeMethod(BaseModel):
         # final time/chan parameters
         time_pars = np.zeros((end, 2))
         time_pars[:, 0] = self.distribution.shape
+        # Initialize last stage of n=1
+        time_pars[0, 1] = self.distribution.mean_to_scale(trial_data.durations.values.mean())
         channel_pars = np.zeros((end, trial_data.cross_corr.shape[1]))
+        llk_prev = np.repeat(-np.inf, kfold)
 
-        if self.base_fit is None:
-            # Initialize last stage of n=1
-            time_pars[0, 1] = self.distribution.mean_to_scale(trial_data.durations.values.mean())
-            channel_pars = np.zeros((end, trial_data.cross_corr.shape[1]))
-            lkh_prev = -np.inf
-        else:
+        if self.base_fit is not None :
             n_events = self.base_fit.n_events+1
             time_pars[:n_events] = self.base_fit.time_pars.copy()
             channel_pars[:n_events-1] = self.base_fit.channel_pars.copy()
-            lkh_prev, _ = self.base_fit.transform(trial_data)
+            llk_prev = self.base_fit.transform(trial_data)[0]
 
         # Iterative fit
         while j < end and n_events <= max_n_events:
             prev_j = j
-            event_model = EventModel(self.pattern, self.distribution, tolerance=self.tolerance,
-                                     n_events=n_events)
             # get new parameters
             j, channel_pars_props, time_pars_props = self._propose_fit_params(
                 n_events, j, channel_pars, time_pars
             )
             # Estimate model based on these propositions
-            event_model.fit(
-                trial_data,
-                np.array([channel_pars_props]),
-                np.array([time_pars_props]),
-                verbose=False,
-                cpus=cpus,
+            channel_pars_res, time_pars_res, llk, max_scale = self._fit_proposition(
+                 trial_data, n_events, channel_pars_props, time_pars_props, cpus, kfold
             )
-
-            loglik = event_model.lkhs.sum()
             # check solution
-            if loglik - lkh_prev > 0:  # accept solution if likelihood improved
-                lkh_prev = loglik
-                self.submodels.append(event_model)
+            diff_llk = llk - llk_prev
+            if all(llk_prev != -np.inf):
+                diff_llk /= np.abs(llk_prev)
+
+            if np.median(diff_llk) > self.tolerance:  # accept solution if likelihood improved
+                llk_prev = llk
 
                 # update channel_pars, params,
-                channel_pars[:n_events] = event_model.channel_pars
-                time_pars[: n_events + 1] = event_model.time_pars
+                channel_pars[:n_events] = channel_pars_res
+                time_pars[: n_events + 1] = time_pars_res
 
                 if verbose:
                     # Just to track advancement
                     events_so_far = [int(np.round(self.distribution.scale_to_mean(x))
                                          *(1000/self.sfreq))
                                          for x in
-                                     np.cumsum(event_model.time_pars[0, :n_events, 1])
+                                     np.cumsum(time_pars[:n_events, 1])
                     ]
                     print(
                         f"{n_events} events found around times "
@@ -175,9 +172,6 @@ class CumulativeMethod(BaseModel):
                     j += 1
             elif self.fastforward:
                 # If ffwd, the next sample tested follows the max explored time for the last event
-                max_scale = np.max(
-                    [np.sum(x[0, :n_events-1, 1]) for x in event_model.time_pars_dev]
-                )
                 max_sample = int(np.round(self.distribution.scale_to_mean(max_scale)))
                 j = np.max([max_sample, (j + 1) * self.step]) / self.step
             else:
@@ -189,6 +183,16 @@ class CumulativeMethod(BaseModel):
         n_events = n_events - 1
         if n_events > 0:
             self._fitted = True
+            event_model = EventModel(self.pattern, self.distribution, tolerance=self.tolerance,
+                                     n_events=n_events)
+            event_model.fit(
+                trial_data,
+                channel_pars=np.array([[channel_pars[:n_events, :]]]),
+                time_pars=np.array([[time_pars[: n_events + 1, :]]]),
+                verbose=False,
+                cpus=1,
+            )
+            self.submodels.append(event_model)
         else:
             warn("Failed to find more than two stages, returning None")
             self._fitted = False
@@ -206,6 +210,41 @@ class CumulativeMethod(BaseModel):
         """
         self._check_fitted("transform data")
         return self.submodels[-1].transform(*args, **kwargs)
+
+    def _fit_proposition(self, trial_data, n_events,
+                         channel_pars_props, time_pars_props,
+                         cpus, kfold):
+
+        event_model = EventModel(self.pattern, self.distribution, tolerance=self.tolerance,
+                                 n_events=n_events)
+        if kfold > 1:
+            folds = list(pseudo_kfold(trial_data, kfold))
+
+            results = Parallel(n_jobs=cpus)(
+                delayed(self.run_fold)(n_events, train_td, test_td,
+                                       channel_pars_props, time_pars_props)
+                for train_td, test_td in folds
+            )
+            llk, channel_pars_res, time_pars_res, max_scale = zip(*results)
+            llk = np.array(llk)
+            channel_pars_res = np.median(np.array(channel_pars_res), axis=0)
+            time_pars_res = np.median(np.array(time_pars_res), axis=0)
+            max_scale = np.median(max_scale)
+        else:
+            event_model.fit(
+                trial_data,
+                np.array([channel_pars_props]),
+                np.array([time_pars_props]),
+                verbose=False,
+                cpus=cpus,
+            )
+            channel_pars_res = event_model.channel_pars
+            time_pars_res = event_model.time_pars
+            llk = event_model.lkhs
+            max_scale = np.max(
+                [np.sum(x[0, :n_events-1, 1]) for x in event_model.time_pars_dev]
+            )
+        return channel_pars_res, time_pars_res, llk, max_scale
 
     def _propose_fit_params(self, n_events, j, channel_pars, time_pars):
 
@@ -275,3 +314,21 @@ class CumulativeMethod(BaseModel):
             self._check_fitted(property_list[attr])
             return getattr(self.submodels[-1], attr)
         return super().__getattribute__(attr)
+
+    def run_fold(self, n_events, train_td, test_td, channel_pars_props, time_pars_props):
+        event_model = EventModel(self.pattern, self.distribution, tolerance=self.tolerance,
+                                         n_events=n_events)
+
+        event_model.fit(
+            train_td,
+            np.array([channel_pars_props]),
+            np.array([time_pars_props]),
+            verbose=False,
+            cpus=1,
+        )
+
+        llk = event_model.transform(test_td)[0].sum()
+        max_scale = np.max(
+                    [np.sum(x[0, :n_events-1, 1]) for x in event_model.time_pars_dev]
+                )
+        return llk, event_model.channel_pars, event_model.time_pars, max_scale
