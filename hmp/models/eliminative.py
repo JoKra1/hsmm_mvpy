@@ -24,13 +24,12 @@ class EliminativeMethod(BaseModel):
     pattern : PatternData
         The pattern and properties to use for cross-correlation. Default is
         half sine with 50 ms width.
-    location : float, optional
-        How much milliseconds should be censored in the EM() step of model fitting.
-        Default is width of the event.
+    location : int, optional
+        How many milliseconds should be censored in the EM() step of model fitting.
+        Default is width of the event, which is by default 50 ms.
         Shorter values than the width of a pattern allow overlap of neighboring events
         but might result in the same event being duplicated in several events.
         Larger values will prevent duplication at the risk of missing neighboring events
-        Defaults to width of pattern, which is by default 50 ms.
     max_events : int, optional
         Maximum number of events to be estimated. By default, it is inferred using
         `compute_max_events()` if not provided.
@@ -97,8 +96,7 @@ class EliminativeMethod(BaseModel):
         pattern_data = self._instantiate_data_pattern(data)
 
         if self.max_events is None:
-            max_events = int(np.rint(np.min(pattern_data.durations.values) //\
-                                     (self.location*pattern_data.sfreq/1000))) + 1
+            max_events = self._compute_max_events(pattern_data, self.location)
         else:
             max_events = self.max_events
         print(max_events)
