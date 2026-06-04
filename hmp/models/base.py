@@ -99,4 +99,6 @@ class BaseModel(ABC):
 
     def fit_transform(self, data, *args, **kwargs):
         self.fit(data, *args, **kwargs)
-        return self.transform(data)
+
+        cpus = kwargs['cpus'] if 'cpus' in kwargs else 1
+        return self.transform(data, cpus=cpus)

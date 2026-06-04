@@ -145,6 +145,7 @@ class EliminativeMethod(BaseModel):
 
     def transform(self,
                   data: PatternData | BaseTransformer | xr.DataArray,
+                  cpus: int = 1
                   ):
         """
         Apply all fitted submodels to the provided data.
@@ -155,6 +156,8 @@ class EliminativeMethod(BaseModel):
             1. data from BaseTransformer or xr.DataArray containing transformed data.
             2. PatternData object.
             In case of option 1, data is cross-correlated with the pattern in self.pattern.
+        cpus : int
+            nr of cpus to use
 
         Returns
         -------
@@ -169,8 +172,8 @@ class EliminativeMethod(BaseModel):
             raise ValueError("Model has not been (succesfully) fitted yet, no fixed models.")
         likelihoods = []
         event_probs = []
-        for n_events, event_model in self.submodels.items():
-            lkh, prob = event_model.transform(pattern_data)
+        for _, event_model in self.submodels.items():
+            lkh, prob = event_model.transform(pattern_data, cpus=cpus)
             likelihoods.append(lkh)
             event_probs.append(prob)
         xr_eventprobs = xr.concat(event_probs, dim=pd.Index(list(self.submodels), name="n_events"))
