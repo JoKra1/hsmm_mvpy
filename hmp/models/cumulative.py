@@ -212,8 +212,8 @@ class CumulativeMethod(BaseModel):
                                      distribution=self.distribution)
             event_model.fit(
                 pattern_data,
-                channel_pars=np.array([[channel_pars[:n_events, :]]]),
-                time_pars=np.array([[time_pars[: n_events + 1, :]]]),
+                channel_pars=channel_pars[:n_events, :],
+                time_pars=time_pars[: n_events + 1, :],
                 verbose=False,
                 cpus=cpus
             )
@@ -258,8 +258,8 @@ class CumulativeMethod(BaseModel):
         else:
             event_model.fit(
                 pattern_data,
-                np.array([channel_pars_props]),
-                np.array([time_pars_props]),
+                channel_pars_props,
+                time_pars_props,
                 verbose=False,
                 cpus=cpus
             )
@@ -346,8 +346,8 @@ class CumulativeMethod(BaseModel):
 
         event_model.fit(
             train_td,
-            np.array([channel_pars_props]),
-            np.array([time_pars_props]),
+            channel_pars_props,
+            time_pars_props,
             verbose=False,
             cpus=1
         )
