@@ -3,7 +3,7 @@ import hmp
 from hmp.models import EventModel
 from hmp.patterndata import PatternData
 from hmp.visu import plot_topo_timecourse
-from hmp import transformers
+from hmp import preprocessors
 
 
 from test_io import init_data
@@ -11,7 +11,7 @@ from test_io import init_data
 
 def test_plot():
     _, _, epoch_data, positions, sfreq, n_events = init_data()
-    hmp_data = transformers.ProjPCA(epoch_data, n_comp=2,)
+    hmp_data = preprocessors.ProjPCA(epoch_data, n_comp=2,)
     # Testing one event less in one condition
     channel_map = np.array([[0, 0, -1],
                          [0, 0, 0]])
