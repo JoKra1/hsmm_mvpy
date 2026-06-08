@@ -147,7 +147,7 @@ class EventModel(BaseModel):
         Parameters
         ----------
         data : Data to fit the model on. One of two options:
-            1. data from BaseTransformer or xr.DataArray containing transformed data.
+            1. data from BasePreprocessor or xr.DataArray containing preprocessed data.
             2. PatternData object.
             In case of option 1, data is cross-correlated with the pattern in self.pattern.
         channel_pars : ndarray, optional
@@ -318,7 +318,7 @@ class EventModel(BaseModel):
         Parameters
         ----------
         data : Data to fit the model on. One of two options:
-            1. data from BaseTransformer or xr.DataArray containing transformed data.
+            1. data from BasePreprocessor or xr.DataArray containing preprocessed data.
             2. PatternData object.
             In case of option 1, data is cross-correlated with the pattern in self.pattern.
         cpus : int, nr of cpus to use
