@@ -66,11 +66,16 @@ class BaseData:
             used for cropping and rejection.
             Default = None
         offset_start : float, optional
-            Time offset from interval start for cropping. Negative number extends
-            epoch before start.
+            Time offset from interval start for cropping, used for padding the data
+            before crosscorrelation. Negative number extends epoch before start.
+            Adding - template width / 2 is recommended. Offsets are removed after 
+            Crosscorrelation.
             Default = 0
         offset_end : float, optional
-            Time offset after interval end for cropping.
+            Time offset from interval start for cropping, used for padding the data
+            before crosscorrelation. Negative number extends epoch before start.
+            Adding - template width / 2 is recommended. Offsets are removed after 
+            Crosscorrelation.
             Default = 0
         center : bool
             Whether to use the median to center over all trials and electrodes using
@@ -90,6 +95,10 @@ class BaseData:
             assert duration_id in self.data.coords, 'duration_id not present in data'
             self.duration_id = duration_id
 
+        self.data.attrs.update({
+            "offset_start": offset_start,
+            "offset_end": offset_end,
+        })
         self.offset_start = offset_start
         self.offset_end = offset_end
         self.center = center
@@ -384,7 +393,7 @@ def default( # noqa: PLR0913
 
     Parameters
     ----------
-    data : xr.DataArray
+    epoch_data : xr.DataArray
         Data with dimensions [sample, component, trial], coordinates that
         describe the dataset including recording, subject, epoch, and a trial
         MultiIndex, and attributes sfreq and offset. Typically obtained
@@ -394,11 +403,16 @@ def default( # noqa: PLR0913
         used for cropping.
         Default = 'response_time'.
     offset_start : float, optional
-        Time offset from interval start for cropping. Negative number extends
-        epoch before start.
+        Time offset from interval start for cropping, used for padding the data
+        before crosscorrelation. Negative number extends epoch before start.
+        Adding - template width / 2 is recommended. Offsets are removed after 
+        Crosscorrelation.
         Default = 0
     offset_end : float, optional
-        Time offset after interval end for cropping.
+        Time offset from interval start for cropping, used for padding the data
+        before crosscorrelation. Negative number extends epoch before start.
+        Adding - template width / 2 is recommended. Offsets are removed after 
+        Crosscorrelation.
         Default = 0
     center : bool
         Median center the data after cropping including baseline
