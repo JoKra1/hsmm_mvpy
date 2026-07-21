@@ -54,8 +54,7 @@ class BaseData:
 
     data: xr.DataArray
 
-    def crop_reject_epochs(self, duration_id: str = 'response_time', offset_start: float = 0,
-                           offset_end: float = 0, center: bool = False,
+    def crop_reject_epochs(self, duration_id: str = 'response_time', offsets: tuple = (0,0), center: bool = False,
                            min_duration: float = 0, max_duration: float = np.inf,
                            reject_amplitude = np.inf, verbose=True):
         """
@@ -65,17 +64,12 @@ class BaseData:
             Name of the variable that contains the trial intervals in the epoch_data
             used for cropping and rejection.
             Default = None
-        offset_start : float, optional
-            Time offset from interval start for cropping, used for padding the data
-            before crosscorrelation. Negative number extends epoch before start.
-            Adding - template width / 2 is recommended. Offsets are removed after 
-            Crosscorrelation.
-            Default = 0
-        offset_end : float, optional
-            Time offset from interval start for cropping, used for padding the data
-            before crosscorrelation. Negative number extends epoch before start.
-            Adding - template width / 2 is recommended. Offsets are removed after 
-            Crosscorrelation.
+        offsets : tuple, optional
+            Seconds of recording to keep before and after end of each epoch duration.
+            First value refers to the times taken before epoch center and second value
+            to the time kept after end. Should be positive. Used for padding the data 
+            before crosscorrelation. Adding template width / 2 is recommended.
+            If float apply the offsets symmetrically.
             Default = 0
         center : bool
             Whether to use the median to center over all trials and electrodes using
@@ -94,13 +88,15 @@ class BaseData:
         if duration_id is not None:
             assert duration_id in self.data.coords, 'duration_id not present in data'
             self.duration_id = duration_id
-
+        if isinstance(offsets, float):
+            offsets = (offsets, offsets)
+        if (np.array(offsets) < 0).any():
+            raise ValueError('offsets should be positive')
         self.data.attrs.update({
-            "offset_start": offset_start,
-            "offset_end": offset_end,
+            "offset_start": offsets[0],
+            "offset_end": offsets[1],
         })
-        self.offset_start = offset_start
-        self.offset_end = offset_end
+        self.offsets = offsets
         self.center = center
         self.min_duration = min_duration
         self.max_duration = max_duration
@@ -264,8 +260,8 @@ class BaseData:
 
         # Sample domain
         rts_arr = np.rint(rts_arr * self.data.sfreq).astype(int)
-        offset_end_samples = int(np.rint(self.offset_end * self.data.sfreq))
-        offset_start_samples = int(np.rint(self.offset_start * self.data.sfreq))
+        offset_start_samples = -int(np.rint(self.offsets[0] * self.data.sfreq))
+        offset_end_samples = int(np.rint(self.offsets[1] * self.data.sfreq))
 
         #check nr of samples
         min_rt = min(rts_arr[rts_arr > 0])
@@ -371,8 +367,7 @@ def from_io(epoch_data: xr.Dataset) -> BaseData:
 def default( # noqa: PLR0913
             epoch_data: xr.Dataset,
             duration_id: str = 'response_time',
-            offset_start: float = 0,
-            offset_end: float = 0,
+            offsets: tuple | float = (0,0),
             center: bool = False,
             min_duration: float = 0,
             max_duration: float = float('Inf'),
@@ -402,17 +397,12 @@ def default( # noqa: PLR0913
         Name of the variable that contains the trial intervals in the epoch_data
         used for cropping.
         Default = 'response_time'.
-    offset_start : float, optional
-        Time offset from interval start for cropping, used for padding the data
-        before crosscorrelation. Negative number extends epoch before start.
-        Adding - template width / 2 is recommended. Offsets are removed after 
-        Crosscorrelation.
-        Default = 0
-    offset_end : float, optional
-        Time offset from interval start for cropping, used for padding the data
-        before crosscorrelation. Negative number extends epoch before start.
-        Adding - template width / 2 is recommended. Offsets are removed after 
-        Crosscorrelation.
+    offsets : tuple, float, optional
+        Seconds of recording to keep before and after end of each epoch duration.
+        First value refers to the times taken before epoch center and second value
+        to the time kept after end. Should be positive. Used for padding the data 
+        before crosscorrelation. Adding template width / 2 is recommended.
+        If float apply the offsets symmetrically.
         Default = 0
     center : bool
         Median center the data after cropping including baseline
@@ -451,8 +441,7 @@ def default( # noqa: PLR0913
 
     base_data.crop_reject_epochs(
         duration_id=duration_id,
-        offset_start=offset_start,
-        offset_end=offset_end,
+        offsets=offsets,
         center=center,
         min_duration=min_duration,
         max_duration=max_duration,
