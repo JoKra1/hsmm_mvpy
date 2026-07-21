@@ -74,7 +74,6 @@ class PatternData:
             .groupby("trial")
             .count(dim="sample")
             .cumsum()
-            .squeeze()
         ).dropna("trial")
 
         starts = np.roll(durations.data, 1)
