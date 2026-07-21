@@ -110,7 +110,7 @@ class PatternData:
 
 def _norm_template(sfreq, template):
     tstep = int(np.rint(1000/sfreq))
-    template = template[::tstep]
+    template = template[ tstep // 2 :: tstep]
     template = template / np.sum(template**2)
     return template
 
