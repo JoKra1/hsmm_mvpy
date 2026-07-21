@@ -79,11 +79,6 @@ class PatternData:
         
         template = pattern.template
 
-        if len(template) < 5:
-            if len(template) < 2:
-                raise ValueError("Cannot use pattern with only one data point")
-            warn('Using a pattern defined by less than 5 points is not recommended')
-
         # Downsample and normalize the template 
         template = _norm_template(data.sfreq, template)
 
@@ -94,7 +89,7 @@ class PatternData:
         
         # Formatting durations with metadata, starts and ends
         boundaries = durations.cumsum().astype(int)
-        boundaries = boundaries[np.r_[True, np.diff(boundaries) > 1]]
+        # boundaries = boundaries[np.r_[True, np.diff(boundaries) > 1]]
         starts = np.roll(boundaries, 1)
         starts[0] = 0
         ends = boundaries - 1
@@ -115,6 +110,11 @@ def _norm_template(sfreq, template):
     tstep = int(np.rint(1000/sfreq))
     template = template[tstep // 2 :: tstep]
     template = template / np.sum(template**2)
+    if len(template) < 5:
+        if len(template) < 2:
+            raise ValueError("Cannot use pattern with only one data point")
+        warn('Using a pattern defined by less than 5 points is not recommended')
+
     return template
 
 def cross_correlation(
@@ -166,9 +166,9 @@ def cross_correlation(
                 )
             # Remove offsets used for crosscorrelation
             trial_data[:offset_start, :] = np.nan
-            trial_data[-offset_end:, :] = np.nan
+            if offset_end > 0:
+                trial_data[-offset_end:, :] = np.nan
             trial_data = trial_data[~np.isnan(trial_data[:,0]), :]
-            
             # compute sequence durations based on number of samples
             t_position = sum(durations[:trial])
             t_duration = len(trial_data)
