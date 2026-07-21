@@ -240,7 +240,6 @@ class EventModel(BaseModel):
             channel_pars = np.zeros((n_groups, self.n_events, self.n_dims), dtype=np.float32)
 
         if channel_pars.ndim < 4:
-            channel_pars = np.squeeze(channel_pars)
             if channel_pars.ndim == 2:
                 channel_pars = np.tile(channel_pars, (n_groups, 1, 1))
 
@@ -829,6 +828,7 @@ class EventModel(BaseModel):
 
         pmf = np.zeros([max_duration, n_stages], dtype=dtype)  # Gamma pmf for each stage scale
         locations_samples = self._time_to_samples(self.locations, pattern_data.sfreq)
+        locations_samples[1:-1] -= self.distribution.shift
         for stage in range(n_stages):
             pmf[:, stage] = np.concatenate(
                 (
