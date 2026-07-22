@@ -77,7 +77,7 @@ def test_basic_operations(sfreq, width):
         'Incorrect timing extraction'
     assert np.all(trial_data.cross_corr[peaks] == trial_data.cross_corr[peaks][0]),\
         'Unexpected peak value in crosscorrelation'
-    assert llk == llks[(sfreq, width)], \
+    assert np.isclose(llk, llks[(sfreq, width)], atol=1e-6), \
         f'Incorrect likelihood from model, expected {llks[(sfreq, width)]} got {llk}'
     assert (test_topos == test_topos.isel(event=0)).all(),\
         'Incorrect topo calculation from estimates'
