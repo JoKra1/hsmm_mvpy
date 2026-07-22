@@ -160,7 +160,7 @@ class EventModel(BaseModel):
             if self.n_events > 1:
                 self.locations[1:-1] = self.pattern.width if location is None else location
 
-        if self.n_events > 1 and any(self.locations[1:-1] < self.pattern.width):
+        if self.n_events > 1 and any(self.locations[1:-1] < np.round(self.pattern.width)):
             warn("For n_event > 1, locations must be greater or equal than pattern.width"
             f" but received locations ({self.locations}) is smaller than  ({self.pattern.width}).")
 
