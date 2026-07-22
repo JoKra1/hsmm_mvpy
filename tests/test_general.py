@@ -18,25 +18,28 @@ epoching=dict(baseline=None)
 
 llks = {(100,50):-3.588911,
         (200,25):-3.588911,
-        (256, 31.25):-4.5260143,
+        (256, 30):-4.5260143,
         (1000,70):-8.8224058,
         }
 
 @pytest.mark.parametrize("sfreq,width",
                          [(100, 50),
                           (200, 25),
-                          (256, 31.25),
+                          (256, 30),#Wrong width
                           (1000, 70),])
 def test_basic_operations(sfreq, width):
     """Simulate noiseless trial with minimum duration possible
     """
     n_trials = 1
     cpus=1
+    gen_width = width
+    if (sfreq, width) == (256, 30): # Generate the true width
+        gen_width = 31.25
     # Minimum possible time with provided halfsine and 3 events
-    times_a = np.array([[1000/sfreq, width, width, 1000/sfreq]], dtype='float64')
+    times_a = np.array([[1000/sfreq, gen_width, gen_width, 1000/sfreq]], dtype='float64')
     sources = []
     for cur_name in names:
-        sources.append([cur_name, 1000/(width*2), 1e-4, None])
+        sources.append([cur_name, 1000/(gen_width*2), 1e-4, None])
     files = simulations.simulate(sources, n_trials, cpus, 'test_raw', overwrite=True,
         sfreq=sfreq, times=times_a, noise=False, seed=1)
     eeg_file = [files[0][0]]
@@ -61,7 +64,7 @@ def test_basic_operations(sfreq, width):
     weights = weights.assign_coords(component=[0])
     
     hmp_data = hmp.basedata.from_io(epoch_data)
-    hmp_data.crop_reject_epochs(duration_id='response_time',offsets=width/2/1000)
+    hmp_data.crop_reject_epochs(duration_id='response_time', offsets=(width/2+1)/1000)
     hmp_data.project(hmp.projectors.Custom(weights), )
 
     pattern = hmp.patterns.HalfSine(width=width)
