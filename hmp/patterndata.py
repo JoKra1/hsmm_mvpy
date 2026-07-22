@@ -69,7 +69,7 @@ class PatternData:
 
         if data.sfreq > 1000:
             raise NotImplementedError('Cannot use sfreq > 1000Hz')
-        
+
         offset_start = int(np.rint(data.offset_start * data.sfreq))
         offset_end = int(np.rint(data.offset_end * data.sfreq))
 
@@ -77,14 +77,14 @@ class PatternData:
         if pattern is None:
             pattern = HalfSine()
 
-        # Downsample and normalize the template 
+        # Downsample and normalize the template
         template = _norm_template(data.sfreq, pattern)
 
         # Equation 1 in 2024 paper
         cross_corr, durations = cross_correlation(data.values, template,
                                        offset_start, offset_end)
         cross_corr = cross_corr.astype(dtype)
-        
+
         # Formatting durations with metadata, starts and ends
         boundaries = durations.cumsum().astype(int)
         # boundaries = boundaries[np.r_[True, np.diff(boundaries) > 1]]
@@ -110,7 +110,7 @@ def _adjust_hs_to_freq(sfreq, width):
     new_width = n_samples / sfreq * 1000
     pattern = HalfSine(width=new_width)
     return pattern
-    
+
 def _norm_template(sfreq, pattern):
     if isinstance(pattern, HalfSine):
         ori_width = pattern.width
@@ -158,7 +158,7 @@ def cross_correlation(
     Returns
     -------
     crossc: np.ndarray
-        A 2D ndarray with shape (n_samples * n_trials, n_components) where each cell 
+        A 2D ndarray with shape (n_samples * n_trials, n_components) where each cell
         contains the correlation value of the component time serie with the given pattern.
     """
     n_samples, n_dims, n_trials = data.shape
@@ -170,7 +170,7 @@ def cross_correlation(
         warn("Data was not padded, distortion in the crosscorrelation at the edge of the trials "
              "is likely. Use the offsets argument in basedata with offsets of at least "
              f"{int(min_offset)} samples given sampling frequency")
-    
+
     for trial in range(n_trials):
         # Identify nan (samples outside of duration)
         mask = ~np.isnan(data[:, 0, trial])

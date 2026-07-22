@@ -54,7 +54,8 @@ class BaseData:
 
     data: xr.DataArray
 
-    def crop_reject_epochs(self, duration_id: str = 'response_time', offsets: tuple = (0,0), center: bool = False,
+    def crop_reject_epochs(self, duration_id: str = 'response_time',
+                           offsets: tuple = (0,0), center: bool = False,
                            min_duration: float = 0, max_duration: float = np.inf,
                            reject_amplitude = np.inf, verbose=True):
         """
@@ -67,7 +68,7 @@ class BaseData:
         offsets : tuple, optional
             Seconds of recording to keep before and after end of each epoch duration.
             First value refers to the times taken before epoch center and second value
-            to the time kept after end. Should be positive. Used for padding the data 
+            to the time kept after end. Should be positive. Used for padding the data
             before crosscorrelation. Adding template width / 2 is recommended.
             If float apply the offsets symmetrically.
             Default = 0
@@ -400,7 +401,7 @@ def default( # noqa: PLR0913
     offsets : tuple, float, optional
         Seconds of recording to keep before and after end of each epoch duration.
         First value refers to the times taken before epoch center and second value
-        to the time kept after end. Should be positive. Used for padding the data 
+        to the time kept after end. Should be positive. Used for padding the data
         before crosscorrelation. Adding template width / 2 is recommended.
         If float apply the offsets symmetrically.
         Default = 0

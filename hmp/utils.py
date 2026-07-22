@@ -18,7 +18,6 @@ def event_times(  # noqa: PLR0912
     mean=False,
     add_rt=False,
     as_time=False,
-    errorbars=None,
     estimate_method="max",
     add_stim=False,
     remove_offset=False,

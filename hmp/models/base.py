@@ -81,7 +81,6 @@ class BaseModel(ABC):
         location : float
             Location in ms.
         """
-        shift = self.distribution.shift
         min_dur = np.min(pattern_data.durations.values) + 2
         location_samples = self._time_to_samples(location, pattern_data.sfreq)
         n = int(np.ceil(min_dur / location_samples))
