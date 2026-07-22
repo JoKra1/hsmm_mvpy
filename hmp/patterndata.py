@@ -78,7 +78,7 @@ class PatternData:
             pattern = HalfSine()
 
         # Downsample and normalize the template
-        template = _norm_template(data.sfreq, pattern)
+        template = _adjust_template(data.sfreq, pattern)
 
         # Equation 1 in 2024 paper
         cross_corr, durations = cross_correlation(data.values, template,
@@ -105,30 +105,19 @@ class PatternData:
                     cross_corr=cross_corr, pattern=pattern, template=template,
                     sfreq=data.sfreq)
 
-def _adjust_hs_to_freq(sfreq, width):
-    n_samples = int(np.round((width/1000.) * sfreq))
-    new_width = n_samples / sfreq * 1000
-    pattern = HalfSine(width=new_width)
-    return pattern
-
-def _norm_template(sfreq, pattern):
-    if isinstance(pattern, HalfSine):
-        ori_width = pattern.width
-        # Adjust target width if sfreq does not match initial created pattern
-        if not np.isclose((ori_width/1000.) * sfreq,
-                          round((ori_width/1000.) * sfreq)):
-            pattern = _adjust_hs_to_freq(sfreq, ori_width)
-            warn("Requested event duration and sampling frequency do not match, "
-                 f"adapting pattern to {np.round(pattern.width,2)} instead of {ori_width} ms")
+def _adjust_template(sfreq, pattern):
     template = pattern.template
     tstep = int(np.rint(1000/sfreq))
-    template = template[tstep // 2 :: tstep]
+    if isinstance(pattern, HalfSine):
+        # Ensure closest symmetry
+        offset = ((pattern.width - 1) // 2) % tstep
+    else:
+        # ideal in most other cases?
+        offset = tstep // 2
+    template = template[offset::tstep]
     template = template / np.sum(template**2)
-    if len(template) < 5:
-        if len(template) < 2:
-            raise ValueError("Cannot use pattern with only one data point")
-        warn('Using a pattern defined by less than 5 points is not recommended')
-
+    if len(template) < 3:
+        raise ValueError("Cannot use pattern with only two data points")
     return template
 
 def cross_correlation(
