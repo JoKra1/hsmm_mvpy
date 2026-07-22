@@ -88,7 +88,7 @@ class BaseData:
         if duration_id is not None:
             assert duration_id in self.data.coords, 'duration_id not present in data'
             self.duration_id = duration_id
-        if isinstance(offsets, float):
+        if isinstance(offsets, (float,int)):
             offsets = (offsets, offsets)
         if (np.array(offsets) < 0).any():
             raise ValueError('offsets should be positive')
