@@ -81,9 +81,9 @@ class BaseModel(ABC):
         location : float
             Location in ms.
         """
-        min_dur = np.min(pattern_data.durations.values) + 2 * self.distribution.shift
+        min_dur = np.min(pattern_data.durations.values) - 2 * self.distribution.shift
         location_samples = self._time_to_samples(location, pattern_data.sfreq)
-        n = int(np.ceil(min_dur / location_samples))
+        n = int(np.floor(min_dur / location_samples)) + 1
         print('Max event that can be fit given minimum duration of '
               f'{min_dur} is {n}')
         return n
