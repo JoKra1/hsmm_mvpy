@@ -105,14 +105,14 @@ class PatternData:
                     sfreq=data.sfreq)
 
 def _adjust_hs_to_freq(sfreq, width):
-    n_samples = int(np.round((width/1000.0) * sfreq))
+    n_samples = int(np.round((width/1000.) * sfreq))
     new_width = n_samples / sfreq * 1000
     pattern = HalfSine(width=new_width)
     return pattern
     
 def _norm_template(sfreq, pattern):
     if isinstance(pattern, HalfSine):
-        ori_width = len(pattern.template)
+        ori_width = pattern.width
         # Adjust target width if sfreq does not match initial created pattern
         if not np.isclose((ori_width/1000.) * sfreq,
                           round((ori_width/1000.) * sfreq)):
@@ -163,6 +163,13 @@ def cross_correlation(
     n_samples, n_dims, n_trials = data.shape
     durations = np.zeros(n_trials, int)
     crossc = np.zeros([n_samples*n_trials, n_dims])*np.nan
+
+    min_offset = np.ceil(len(template)/2)
+    if offset_start < min_offset or offset_end < min_offset:
+        warn("Data was not padded, distortion in the crosscorrelation at the edge of the trials "
+             "is likely. Use the offsets argument in basedata with offsets of at least "
+             f"{int(min_offset)} samples given sampling frequency")
+    
     for trial in range(n_trials):
         # Identify nan (samples outside of duration)
         mask = ~np.isnan(data[:, 0, trial])
@@ -177,6 +184,7 @@ def cross_correlation(
                     mode="same",
                     method="direct",#Expect short template, no FFT
                 )
+
             # Remove offsets used for crosscorrelation
             trial_data[:offset_start, :] = np.nan
             if offset_end > 0:
