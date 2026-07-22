@@ -603,7 +603,6 @@ def plot_loocv(  # noqa # Refactor?
 
 def plot_latencies(  # noqa  # Refactor?
     estimates,
-    init=None,
     labels=[],
     colors=default_colors,
     figsize=False,
@@ -644,14 +643,13 @@ def plot_latencies(  # noqa  # Refactor?
     as_time : bool
         if true, plot time (ms) instead of sample.
     """
-    if as_time and init is not None:
-        time_step = 1000 / init.sfreq  # time_step still needed below
+    if as_time:
+        time_step = 1000 / estimates.sfreq  # time_step still needed below
     else:
         time_step = 1
 
     # if hmp estimates are provided, calculate time
     if isinstance(estimates, (xr.DataArray, xr.Dataset)):
-        assert init is not None, "If hmp results object provided, init is a required parameter."
         ydim = None
         if (
             "n_events" in estimates.dims and estimates.n_events.count() > 1
