@@ -100,6 +100,7 @@ class PatternData:
             dims=duplicate_coords.dims,
         )
         durations = durations.dropna('trial')
+        durations.attrs["sfreq"] = data.sfreq
         return cls(durations=durations, starts=starts, ends=ends,
                     cross_corr=cross_corr, pattern=pattern, template=template,
                     sfreq=data.sfreq)
