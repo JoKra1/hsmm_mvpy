@@ -255,12 +255,14 @@ class BaseData:
             print(f"Found {len(rts_arr[rts_arr > 0])} trials with positively defined durations "
                 f"and {inexistant_dur} trials without durations (0 or nan)")
 
-        rts_arr[rts_arr > self.max_duration] = 0
-        rts_arr[rts_arr < self.min_duration] = 0
-        rt_criteria_rej = len(rts_arr[rts_arr == 0]) - inexistant_dur
-
         # Sample domain
         rts_arr = np.rint(rts_arr * self.data.sfreq).astype(int)
+        min_dur = np.rint(self.min_duration * self.data.sfreq).astype(int)
+        max_dur = np.rint(self.max_duration * self.data.sfreq).astype(int)
+        rts_arr[rts_arr <= min_dur] = 0
+        rts_arr[rts_arr > max_dur] = 0
+        rt_criteria_rej = len(rts_arr[rts_arr == 0]) - inexistant_dur
+        
         offset_start_samples = -int(np.rint(self.offsets[0] * self.data.sfreq))
         offset_end_samples = int(np.rint(self.offsets[1] * self.data.sfreq))
 
