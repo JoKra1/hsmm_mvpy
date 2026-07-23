@@ -262,7 +262,7 @@ class BaseData:
         rts_arr[rts_arr <= min_dur] = 0
         rts_arr[rts_arr > max_dur] = 0
         rt_criteria_rej = len(rts_arr[rts_arr == 0]) - inexistant_dur
-        
+
         offset_start_samples = -int(np.rint(self.offsets[0] * self.data.sfreq))
         offset_end_samples = int(np.rint(self.offsets[1] * self.data.sfreq))
 
