@@ -56,7 +56,7 @@ class BaseData:
 
     def crop_reject_epochs(self, duration_id: str = 'response_time',
                            offsets: tuple = (0,0), center: bool = True,
-                           min_duration: float = 0, max_duration: float = np.inf,
+                           min_duration: float = 0, max_duration: float | None = None,
                            reject_amplitude = np.inf, verbose=True):
         """
         Crop and reject epochs, typically before projection.
@@ -104,7 +104,8 @@ class BaseData:
         self.reject_amplitude = reject_amplitude
 
         if self.max_duration is float('Inf') or self.max_duration is None:
-            self.max_duration = int(self.data.sample.max()) / self.data.sfreq
+            self.max_duration = int(self.data.sample.max()) / self.data.sfreq\
+                                    - offsets[1]
         if self.min_duration == 0 or self.min_duration is None:
             self.min_duration = 1 / self.data.sfreq
 
@@ -262,10 +263,12 @@ class BaseData:
         rts_arr[rts_arr <= min_dur] = 0
         rts_arr[rts_arr > max_dur] = 0
         rt_criteria_rej = len(rts_arr[rts_arr == 0]) - inexistant_dur
-
         offset_start_samples = -int(np.rint(self.offsets[0] * self.data.sfreq))
         offset_end_samples = int(np.rint(self.offsets[1] * self.data.sfreq))
 
+        if len(rts_arr) == 0:
+            raise ValueError(f"No duration left in {self.duration_id}")
+        
         #check nr of samples
         min_rt = min(rts_arr[rts_arr > 0])
         if min_rt < 10:
@@ -373,9 +376,9 @@ def default( # noqa: PLR0913
             offsets: tuple | float = (0,0),
             center: bool = True,
             min_duration: float = 0,
-            max_duration: float = float('Inf'),
+            max_duration: float | None = None,
             reject_amplitude: float = np.inf,
-            n_comp: float = None,
+            n_comp: float | None = None,
             whiten: bool = True,
             common_variance: bool = True,
             recording_zscore: bool = True,
