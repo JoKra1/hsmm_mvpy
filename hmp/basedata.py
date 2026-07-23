@@ -232,7 +232,7 @@ class BaseData:
             self.data = self.data.stack(trial=['recording','epoch'])\
                 .dropna("trial", how="all")
 
-    def _crop_reject_epochs(self,
+    def _crop_reject_epochs(self, #noqa: PLR0912
                             verbose=True):
         """
         Crop each epoch from time 0 of the epoch to its interval.
@@ -268,7 +268,7 @@ class BaseData:
 
         if len(rts_arr) == 0:
             raise ValueError(f"No duration left in {self.duration_id}")
-        
+
         #check nr of samples
         min_rt = min(rts_arr[rts_arr > 0])
         if min_rt < 10:
