@@ -370,7 +370,7 @@ def from_io(epoch_data: xr.Dataset) -> BaseData:
     base_data.data.attrs["sfreq"] = epoch_data.sfreq
     return base_data
 
-def default( # noqa: PLR0913
+def default( # noqa: PLR0913, PLR0917
             epoch_data: xr.Dataset,
             duration_id: str = 'response_time',
             offsets: tuple | float = (0,0),

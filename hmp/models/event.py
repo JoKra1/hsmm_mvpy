@@ -84,7 +84,7 @@ class EventModel(BaseModel):
         one of 'gamma','lognormal','wald', or 'weibull'
     """
 
-    def __init__(# noqa: PLR0913
+    def __init__(# noqa: PLR0913, PLR0917
         self,
         n_events: int,
         pattern: Pattern = None,
