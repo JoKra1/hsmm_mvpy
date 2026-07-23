@@ -18,7 +18,7 @@ from xarray import Dataset
 from hmp.io import preprocessing, utils
 
 
-def read_mne_raw(# noqa: PLR0913
+def read_mne_raw(# noqa: PLR0913, PLR0917
     recordings: list,
     centering_id: dict,
     event_id: dict = {},
