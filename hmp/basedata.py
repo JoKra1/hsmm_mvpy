@@ -55,7 +55,7 @@ class BaseData:
     data: xr.DataArray
 
     def crop_reject_epochs(self, duration_id: str = 'response_time',
-                           offsets: tuple = (0,0), center: bool = False,
+                           offsets: tuple = (0,0), center: bool = True,
                            min_duration: float = 0, max_duration: float = np.inf,
                            reject_amplitude = np.inf, verbose=True):
         """
@@ -369,7 +369,7 @@ def default( # noqa: PLR0913
             epoch_data: xr.Dataset,
             duration_id: str = 'response_time',
             offsets: tuple | float = (0,0),
-            center: bool = False,
+            center: bool = True,
             min_duration: float = 0,
             max_duration: float = float('Inf'),
             reject_amplitude: float = np.inf,
