@@ -22,8 +22,8 @@ Includes methods to:
     2. Project channels to new virtual channel, either based on PCA,
         an arbitrary linear combination of channels,
         or the identity of the channels.
-    3. Whiten the components and standardize each trial's variance
-       (`common_variance`) and standardize the components for each recording.
+    3. Whiten the components,  standardize the components for each recording (False by Default)
+        and standardize each trial's variance (`common_variance`).
 """
 
 from copy import deepcopy
@@ -135,21 +135,19 @@ class BaseData:
         self._crop_reject_epochs(verbose)
 
     def project(self,
-                projector: Projector,
-                verbose=True):
+                projector: Projector):
         """
         Project data from channels to components.
 
         projector: Projector
             Module from the projectors class
         """
-        projector.verbose = verbose
         self.data = projector.fit_transform(self.data)
         self.data = self.data.transpose('sample','component','trial')
         self.projector = projector
 
-    def apply_variance_ops(self, whiten: bool = True, common_variance: bool = True,
-                            recording_zscore: bool = True):
+    def apply_variance_ops(self, whiten: bool = True, common_variance: bool = False,
+                            standardize_recording: bool = False):
         """
         Apply three variance operators, typically after projection.
 
@@ -158,23 +156,24 @@ class BaseData:
             Default = True
         common_variance : bool, optional
             Standardize variance across trials.
-            Default = True
-        recording_zscore: bool, optional
-            z-score each component for each recording
-            Default = True
+            Default = False
+        standardize_recording: bool, optional
+            Divide each component for each recording by its standard deviation
+            Default = False
         """
         self._check_order(projected=True)
         self.whiten = whiten
         self.common_variance = common_variance
-        self.recording_zscore = recording_zscore
+        self.standardize_recording = standardize_recording
         self._apply_variance_ops()
 
     def pca_and_variance(self, n_comp: float = None, method_pca: str='svd',
-                         whiten=True, common_variance=True, recording_zscore=True, verbose=True):
+                         whiten=True, common_variance=False, standardize_recording=False,
+                         verbose=True):
         """Apply PCA and variance operations."""
         self.project(PCA(n_comp=n_comp, method_pca=method_pca, verbose=verbose))
         self.apply_variance_ops(whiten=whiten, common_variance=common_variance,
-                                recording_zscore=recording_zscore)
+                                standardize_recording=standardize_recording)
 
     def select_coord(self,
                 value: object,
@@ -217,20 +216,19 @@ class BaseData:
 
     def _apply_variance_ops(self):
         """Apply one or more variance operations."""
-        if self.whiten:
+        if self.whiten and not self.standardize_recording:
             self.data /= self.data.std(['trial','sample'], skipna=True)
+        elif self.standardize_recording:
+            self.data = self.data.unstack()
+            self.data /= self.data.std(['epoch','sample'], skipna=True)
+            self.data = self.data.stack(trial=['recording','epoch'])\
+                .dropna("trial", how="all")
         else:
             self.data /= self.data.std(..., skipna=True)
 
         if self.common_variance:
             self.data /= self.data.std(['component','sample'], skipna=True)
 
-        if self.recording_zscore:
-            self.data = self.data.unstack()
-            self.data -= self.data.mean(['epoch','sample'], skipna=True)
-            self.data /= self.data.std(['epoch','sample'], skipna=True)
-            self.data = self.data.stack(trial=['recording','epoch'])\
-                .dropna("trial", how="all")
 
     def _crop_reject_epochs(self, #noqa: PLR0912
                             verbose=True):
@@ -380,8 +378,8 @@ def default( # noqa: PLR0913, PLR0917
             reject_amplitude: float = np.inf,
             n_comp: float | None = None,
             whiten: bool = True,
-            common_variance: bool = True,
-            recording_zscore: bool = True,
+            common_variance: bool = False,
+            standardize_recording: bool = False,
             verbose: bool = True
     ):
     """
@@ -431,10 +429,10 @@ def default( # noqa: PLR0913, PLR0917
         Default = True
     common_variance : bool, optional
         Standardize variance across trials.
-        Default = True
-    recording_zscore: bool, optional
-        z-score each component for each recording
-        Default = True
+        Default = False
+    standardize_recording: bool, optional
+        Divide each component for each recording by its standard deviation
+        Default = False
     verbose:
         Provide feedback on the different operations
 
@@ -460,7 +458,7 @@ def default( # noqa: PLR0913, PLR0917
     base_data.apply_variance_ops(
         whiten=whiten,
         common_variance=common_variance,
-        recording_zscore=recording_zscore,
+        standardize_recording=standardize_recording,
     )
 
     return base_data
