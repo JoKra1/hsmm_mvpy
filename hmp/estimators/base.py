@@ -53,7 +53,7 @@ class BaseEstimator(ABC):
         self.fitted = False
 
     @abstractmethod
-    def fit(  # noqa: PLR0913, PLR0917
+    def fit(
         self,
         model,
         pattern_data: PatternData,

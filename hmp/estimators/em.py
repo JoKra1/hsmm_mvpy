@@ -46,7 +46,7 @@ class EMEstimator(BaseEstimator):
         self.min_iteration = min_iteration
         self.n_cor = n_cor
 
-    def fit(  # noqa: PLR0913, PLR0917
+    def fit(
         self,
         model,
         pattern_data: PatternData,
@@ -132,7 +132,7 @@ class EMEstimator(BaseEstimator):
     def _em_star(self, args):  # for tqdm usage  #noqa
         return self.em(*args)
 
-    def em(  # noqa: PLR0912, PLR0913, PLR0917
+    def em(  # noqa: PLR0912
         self,
         model,
         pattern_data: PatternData,

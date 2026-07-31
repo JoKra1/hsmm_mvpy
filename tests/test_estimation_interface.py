@@ -27,7 +27,7 @@ class MockEstimator(BaseEstimator):
         super().__init__(**kwargs)
         self.fit_called = False
 
-    def fit(self, model, pattern_data, initial_channel_pars, initial_time_pars,  # noqa: ARG002, PLR0913, PLR0917
+    def fit(self, model, pattern_data, initial_channel_pars, initial_time_pars,  # noqa: ARG002
             groups=None, cpus=1):  # noqa: ARG002
         """Return the starting point untouched, without running any estimation."""
         self.fit_called = True
