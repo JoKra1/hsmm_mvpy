@@ -2,7 +2,19 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from . import distributions, estimators, io, loocv, models, patterns, preprocessing, utils, visu
+from . import (
+    basedata,
+    crossvalidation,
+    distributions,
+    estimators,
+    io,
+    models,
+    patterndata,
+    patterns,
+    projectors,
+    utils,
+    visu,
+)
 
 try:
     __version__ = version("hmp")
@@ -10,5 +22,6 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 
-__all__ = ["models", "simulations", "utils", "visu", "io", "preprocessing", "patterns",
-           "distributions" ,"mcca", "loocv", "estimators", "__version__"]
+__all__ = ["models", "simulations", "utils", "visu", "io", "patterns", "projectors",
+           "patterndata", "basedata", "distributions" ,"crossvalidation", "estimators",
+           "__version__"]
