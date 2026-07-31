@@ -22,7 +22,6 @@ from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
 
 
-
 class EventModel(BaseModel):
     """
     A model for estimating HMP events.
@@ -285,7 +284,10 @@ class EventModel(BaseModel):
 
         Returns
         -------
-        None
+        EstimationResult
+            The full result of the estimation, also stored on the model as
+            ``estimation_result``. Fitted parameters remain available through
+            the usual attributes, so callers may ignore this return value.
         """
         pattern_data = self._instantiate_data_pattern(data)
         self.n_dims = pattern_data.cross_corr.shape[1]
@@ -316,6 +318,7 @@ class EventModel(BaseModel):
         result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
 
         self._fitted = True
+        self.estimation_result = result
         self.lkhs = result.likelihood
         self.channel_pars = result.channel_pars
         self.time_pars = result.time_pars
@@ -323,6 +326,7 @@ class EventModel(BaseModel):
         self.traces_group = result.diagnostics["traces_group"]
         self.time_pars_dev = result.diagnostics["time_pars_dev"]
         self.group = groups
+        return result
 
     def transform(self, data: Any, cpus: int = 1) -> tuple[np.ndarray, xr.DataArray]:
         """
