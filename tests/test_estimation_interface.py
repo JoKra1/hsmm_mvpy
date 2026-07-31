@@ -188,7 +188,6 @@ class TestEstimatorInjection:
 
         traces = result.diagnostics["traces"]
         assert isinstance(traces, np.ndarray)
-        # one likelihood for the starting point plus one per accepted iteration
         assert len(traces) == result.n_iterations + 1
         assert result.diagnostics["time_pars_dev"].shape[1:] == result.time_pars.shape
 
@@ -218,7 +217,6 @@ class TestBackwardCompatibility:
         model = EventModel(n_events=n_events, starting_points=3)
         result = model.fit(pdata_b, verbose=False)
 
-        # one likelihood per evaluated starting point, and the retained fit is the best
         assert len(result.diagnostics["lkhs"]) == model.starting_points
         assert result.likelihood == np.max(result.diagnostics["lkhs"])
 
