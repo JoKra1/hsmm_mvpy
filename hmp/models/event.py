@@ -9,21 +9,17 @@ import itertools
 import multiprocessing as mp
 from itertools import product
 from typing import Any
-from warnings import resetwarnings, warn
+from warnings import warn
 
 import numpy as np
 import xarray as xr
 
 from hmp.basedata import BaseData
+from hmp.estimators.base import BaseEstimator
+from hmp.estimators.em import EMEstimator
 from hmp.models.base import BaseModel
 from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
-
-try:
-    __IPYTHON__
-    from tqdm.notebook import tqdm
-except NameError:
-    from tqdm import tqdm
 
 
 
@@ -253,13 +249,14 @@ class EventModel(BaseModel):
 
         return channel_pars, time_pars
 
-    def fit(
+    def fit(  # noqa: PLR0913, PLR0917
         self,
         data: BaseData | PatternData,
         channel_pars: np.ndarray = None,
         time_pars: np.ndarray = None,
         verbose: bool = True,
-        cpus: int = 1
+        cpus: int = 1,
+        estimator: BaseEstimator = None,
     ):
         """
         Fit HMP for a single n_events model.
@@ -281,6 +278,10 @@ class EventModel(BaseModel):
             If True, displays output useful for debugging. Default is True.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        estimator : BaseEstimator, optional
+            Estimation method used to optimize the parameters. Defaults to
+            :class:`~hmp.estimators.em.EMEstimator` built from the tolerance and
+            iteration limits given to the model.
 
         Returns
         -------
@@ -304,51 +305,23 @@ class EventModel(BaseModel):
                 print(f"Estimating {self.n_events} events model")
 
 
-        if cpus > 1:
-            inputs = zip(
-                itertools.repeat(pattern_data),
-                channel_pars,
-                time_pars,
-                itertools.repeat(groups),
-                itertools.repeat(1),
+        if estimator is None:
+            estimator = EMEstimator(
+                tolerance=self.tolerance,
+                max_iteration=self.max_iteration,
+                min_iteration=self.min_iteration,
+                n_cor=self.n_cor,
             )
-            with mp.Pool(processes=cpus) as pool:
-                if self.starting_points > 1:
-                    estimates = list(tqdm(pool.imap(self._EM_star, inputs),
-                                          total=len(channel_pars)))
-                else:
-                    estimates = pool.starmap(self.EM, inputs)
 
-        else:  # avoids problems if called in an already parallel function
-            estimates = []
-            for t_pars, c_pars in zip(time_pars, channel_pars):
-                estimates.append(
-                    self.EM(
-                        pattern_data,
-                        c_pars,
-                        t_pars,
-                        groups,
-                        1,
-                    )
-                )
-            resetwarnings()
-
-        lkhs = np.array([x[0] for x in estimates])
-        if self.starting_points > 1 :
-            max_lkhs = np.argmax(lkhs)
-        else:
-            max_lkhs = 0
-
-        if np.isneginf(lkhs.sum()):
-            warn("Fit failed, inspect provided starting points")
+        result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
 
         self._fitted = True
-        self.lkhs = lkhs[max_lkhs]
-        self.channel_pars =  np.array(estimates[max_lkhs][1])
-        self.time_pars = np.array(estimates[max_lkhs][2])
-        self.traces = np.array(estimates[max_lkhs][3])
-        self.traces_group = np.array(estimates[max_lkhs][4])
-        self.time_pars_dev = np.array(estimates[max_lkhs][5])
+        self.lkhs = result.likelihood
+        self.channel_pars = result.channel_pars
+        self.time_pars = result.time_pars
+        self.traces = result.diagnostics["traces"]
+        self.traces_group = result.diagnostics["traces_group"]
+        self.time_pars_dev = result.diagnostics["time_pars_dev"]
         self.group = groups
 
     def transform(self, data: Any, cpus: int = 1) -> tuple[np.ndarray, xr.DataArray]:
@@ -484,159 +457,6 @@ class EventModel(BaseModel):
                 "channel": range(self.n_dims),
             },
         )
-
-    def _EM_star(self, args):  # for tqdm usage  #noqa
-        return self.EM(*args)
-
-    def EM(  # noqa
-        self,
-        pattern_data: PatternData,
-        initial_channel_pars: np.ndarray,
-        initial_time_pars: np.ndarray,
-        groups: np.ndarray = None,
-        cpus: int = 1,
-    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Fit using expectation maximization.
-
-        Parameters
-        ----------
-        pattern_data : PatternData
-            Preprocessed data cross-correlated with the pattern of the model
-        initial_channel_pars : np.ndarray
-            2D ndarray (n_events * n_channels) or 3D (iteration * n_events * n_channels),
-            initial conditions for event channel contributions.
-        initial_time_pars : np.ndarray
-            2D ndarray (n_stages * n_parameters) or 3D (iteration * n_stages * n_parameters),
-            initial conditions for time distribution parameters.
-        groups : np.ndarray, optional
-            Array indicating the groups for grouping modeling. Default is None.
-        cpus : int, optional
-            Number of cores to use in multiprocessing functions. Default is 1.
-
-        Returns
-        -------
-        lkh : float
-            Summed log probabilities.
-        channel_pars : np.ndarray
-            Estimated channel contributions for each event.
-        time_pars : np.ndarray
-            Estimated time distribution parameters for each stage.
-        traces : np.ndarray
-            Log-likelihood values for each EM iteration.
-        time_pars_dev : np.ndarray
-            Time parameters for each iteration of the EM algorithm.
-        """
-        lkh, eventprobs = self._estim_probs_groups(
-            pattern_data,
-            initial_channel_pars, initial_time_pars,
-            groups, cpus=cpus
-        )
-        data_groups = np.unique(groups)
-        channel_pars = initial_channel_pars.copy()
-        time_pars = initial_time_pars.copy()
-        traces = [lkh]
-        traces_group = [eventprobs.group_lkh]
-        time_pars_dev = [time_pars.copy()]
-        i = 0
-
-        lkh_prev = lkh.copy()
-        while i < self.max_iteration:  # Expectation-Maximization algorithm
-            if i >= self.min_iteration and (
-                np.isneginf(lkh) or self.tolerance > (lkh - lkh_prev) / np.abs(lkh_prev)):
-                break
-
-            # As long as new run gives better likelihood, go on
-            lkh_prev = lkh.copy()
-
-            # Storage for step-length control
-            new_channel_pars = channel_pars.copy()
-            new_time_pars = time_pars.copy()
-
-            for cur_group in data_groups:  # get params/c_pars
-                channel_map_group = np.where(self.channel_map[cur_group, :] >= 0)[0]
-                time_map_group = np.where(self.time_map[cur_group, :] >= 0)[0]
-                epochs_group = np.where(groups == cur_group)[0]
-
-                # get c_pars/t_pars by group
-                c_par, t_par = self.get_channel_time_parameters_expectation(pattern_data,
-                        eventprobs.values[:, :np.max(pattern_data.durations.values[epochs_group]),
-                                        channel_map_group],
-                                        subset_epochs=epochs_group)
-                new_channel_pars[cur_group, channel_map_group, :] = c_par
-                new_time_pars[cur_group, time_map_group, :] = t_par
-
-                new_channel_pars[cur_group, self.fixed_channel_pars, :] = \
-                    initial_channel_pars[cur_group, self.fixed_channel_pars, :].copy()
-                new_time_pars[cur_group, self.fixed_time_pars, :] = \
-                    initial_time_pars[cur_group, self.fixed_time_pars, :].copy()
-
-            # set c_pars to mean if requested in map
-            for m in range(self.n_events):
-                for m_set in np.unique(self.channel_map[:, m]):
-                    if m_set >= 0:
-                        new_channel_pars[self.channel_map[:, m] == m_set, m, :] = np.mean(
-                            new_channel_pars[self.channel_map[:, m] == m_set, m, :], axis=0
-                        )
-
-            # set param to mean if requested in map
-            for p in range(self.n_events + 1):
-                for p_set in np.unique(self.time_map[:, p]):
-                    if p_set >= 0:
-                        new_time_pars[self.time_map[:, p] == p_set, p, :] = np.mean(
-                            new_time_pars[self.time_map[:, p] == p_set, p, :], axis=0
-                        )
-
-            # Step length control to ensure parameter updates result in valid llk
-            for icor in range(self.n_cor + 1):
-                if icor == self.n_cor:  # just reset
-                    warn(
-                        (
-                            "M step failed, after step halvings. "
-                            "Falling back to previous parameter estimates."
-                        ),
-                        RuntimeWarning,
-                    )
-                    new_channel_pars = channel_pars
-                    new_time_pars = time_pars
-
-                # Compute llk under new parameters
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    lkh, eventprobs = self._estim_probs_groups(
-                        pattern_data,
-                        new_channel_pars, new_time_pars,
-                        groups, cpus=cpus
-                    )
-
-                # Stop if no update
-                if np.isclose((new_time_pars - time_pars).sum(), 0):
-                    break
-
-                # Half step in case the llk is ill-defined
-                if np.isneginf(lkh):
-                    new_channel_pars = (new_channel_pars + channel_pars)/2
-                    new_time_pars = (new_time_pars + time_pars)/2
-                else:
-                    # Accept step
-                    break
-
-            # Accept new parameters
-            time_pars = new_time_pars
-            channel_pars = new_channel_pars
-
-            traces.append(lkh)
-            traces_group.append(eventprobs.group_lkh)
-            time_pars_dev.append(time_pars.copy())
-            i += 1
-
-        if i == self.max_iteration:
-            warn(
-                f"Convergence failed, estimation hit the maximum number of iterations: "
-                f"({int(self.max_iteration)})",
-                RuntimeWarning,
-            )
-        return lkh, channel_pars, time_pars, np.array(traces), \
-            np.array(traces_group), np.array(time_pars_dev)
 
     def get_channel_time_parameters_expectation(
         self,

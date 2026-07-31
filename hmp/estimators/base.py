@@ -1,10 +1,12 @@
 """Base classes for parameter estimation in HMP models."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import numpy as np
+
+from hmp.patterndata import PatternData
 
 
 @dataclass
@@ -34,15 +36,8 @@ class EstimationResult:
     likelihood: float
     converged: bool
     n_iterations: int
-    diagnostics: Dict[str, Any]
-    uncertainty: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        """Validate result data after initialization."""
-        if self.channel_pars is not None and not isinstance(self.channel_pars, np.ndarray):
-            self.channel_pars = np.asarray(self.channel_pars)
-        if self.time_pars is not None and not isinstance(self.time_pars, np.ndarray):
-            self.time_pars = np.asarray(self.time_pars)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+    uncertainty: Optional[dict[str, Any]] = None
 
 
 class BaseEstimator(ABC):
@@ -55,24 +50,34 @@ class BaseEstimator(ABC):
     def __init__(self, **kwargs):
         """Initialize the estimator with method-specific parameters."""
         self.params = kwargs
-        self._fitted = False
+        self.fitted = False
 
     @abstractmethod
-    def fit(self, trial_data, initial_channel_pars: np.ndarray,
-           initial_time_pars: np.ndarray, fixed_channel_pars: list = None,
-           fixed_time_pars: list = None, **kwargs) -> EstimationResult:
+    def fit(  # noqa: PLR0913, PLR0917
+        self,
+        model,
+        pattern_data: PatternData,
+        initial_channel_pars: np.ndarray,
+        initial_time_pars: np.ndarray,
+        groups: np.ndarray = None,
+        cpus: int = 1,
+    ) -> EstimationResult:
         """Estimate model parameters.
 
         Parameters
         ----------
-        trial_data : TrialData
-            Trial data to fit the model to
+        model : BaseModel
+            Model providing the likelihood and the expectation step.
+        pattern_data : PatternData
+            Preprocessed data cross-correlated with the pattern of the model.
         initial_channel_pars : np.ndarray
-            Initial channel parameter values
+            Initial channel parameter values, one per starting point.
         initial_time_pars : np.ndarray
-            Initial time distribution parameter values
-        **kwargs
-            Method-specific fitting options
+            Initial time distribution parameter values, one per starting point.
+        groups : np.ndarray, optional
+            Array indicating the groups for grouping modeling. Default is None.
+        cpus : int, optional
+            Number of cores to use in multiprocessing functions. Default is 1.
 
         Returns
         -------
@@ -84,7 +89,7 @@ class BaseEstimator(ABC):
     @property
     def is_fitted(self) -> bool:
         """Whether the estimator has been fitted."""
-        return self._fitted
+        return self.fitted
 
     def get_method_name(self) -> str:
         """Get the name of the estimation method."""
