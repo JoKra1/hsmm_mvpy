@@ -10,21 +10,28 @@ from hmp.models import EventModel
 from hmp.patterndata import PatternData
 
 
-def data():
-    """Noiseless single-participant data, as used by the other model tests."""
-    event_b, _, epoch_data, _, _, n_events = init_data()
+@pytest.fixture(scope="module")
+def projected():
+    """Read and project the noiseless recording once for the whole module."""
+    _, _, epoch_data, _, _, n_events = init_data()
     hmp_data = hmp.basedata.default(
         epoch_data, n_comp=3, center=True, duration_id="response_time"
     )
-    pdata_b = PatternData.from_basedata(hmp_data.select_coord("b", "subject"))
-    return event_b, epoch_data, pdata_b, n_events
+    return hmp_data.select_coord("b", "subject"), n_events
+
+
+@pytest.fixture
+def pdata(projected):
+    """Build fresh PatternData per test from the shared projection."""
+    base_data, n_events = projected
+    return PatternData.from_basedata(base_data), n_events
 
 
 class MockEstimator(BaseEstimator):
     """Minimal estimator used to check that injection is honored."""
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self):
+        super().__init__()
         self.fit_called = False
 
     def fit(self, model, pattern_data, initial_channel_pars, initial_time_pars,  # noqa: ARG002
@@ -115,13 +122,13 @@ class TestEMEstimator:
 class TestEstimatorInjection:
     """EventModel.fit delegates the estimation to a swappable estimator."""
 
-    def test_injected_em_matches_default(self):
+    def test_injected_em_matches_default(self, pdata):
         """Passing an equivalent EMEstimator must not change the fit at all.
 
         This is the guard on the refactor: routing the estimation through
         EMEstimator has to reproduce the in-model implementation exactly.
         """
-        _, _, pdata_b, n_events = data()
+        pdata_b, n_events = pdata
 
         default_model = EventModel(n_events=n_events)
         default_model.fit(pdata_b, verbose=False)
@@ -133,13 +140,13 @@ class TestEstimatorInjection:
         assert np.array_equal(injected_model.time_pars, default_model.time_pars)
         assert np.array_equal(injected_model.channel_pars, default_model.channel_pars)
 
-    def test_estimator_settings_change_the_fit(self):
+    def test_estimator_settings_change_the_fit(self, pdata):
         """A coarser estimator must actually stop earlier.
 
         Without this, `test_injected_em_matches_default` would also pass if the
         estimator argument were silently ignored.
         """
-        _, _, pdata_b, n_events = data()
+        pdata_b, n_events = pdata
 
         fine = EventModel(n_events=n_events)
         fine.fit(pdata_b, verbose=False)
@@ -150,9 +157,9 @@ class TestEstimatorInjection:
 
         assert len(coarse.traces) < len(fine.traces)
 
-    def test_custom_estimator_is_used(self):
+    def test_custom_estimator_is_used(self, pdata):
         """A non-EM estimator drives the fit and populates the model."""
-        _, _, pdata_b, n_events = data()
+        pdata_b, n_events = pdata
 
         model = EventModel(n_events=n_events)
         mock = MockEstimator()
@@ -166,8 +173,8 @@ class TestEstimatorInjection:
         assert np.array_equal(model.channel_pars, result.channel_pars)
         assert np.array_equal(model.time_pars, result.time_pars)
 
-    def test_result_is_returned_and_stored(self):
-        _, _, pdata_b, n_events = data()
+    def test_result_is_returned_and_stored(self, pdata):
+        pdata_b, n_events = pdata
 
         model = EventModel(n_events=n_events)
         result = model.fit(pdata_b, verbose=False)
@@ -177,8 +184,8 @@ class TestEstimatorInjection:
         assert result.converged
         assert result.n_iterations >= 1
 
-    def test_diagnostics_structure(self):
-        _, _, pdata_b, n_events = data()
+    def test_diagnostics_structure(self, pdata):
+        pdata_b, n_events = pdata
 
         model = EventModel(n_events=n_events)
         result = model.fit(pdata_b, verbose=False)
@@ -195,8 +202,8 @@ class TestEstimatorInjection:
 class TestBackwardCompatibility:
     """Existing entry points keep working through the estimator."""
 
-    def test_fit_transform(self):
-        _, _, pdata_b, n_events = data()
+    def test_fit_transform(self, pdata):
+        pdata_b, n_events = pdata
 
         model = EventModel(n_events=n_events)
         lkh, estimates = model.fit_transform(pdata_b, verbose=False)
@@ -204,7 +211,7 @@ class TestBackwardCompatibility:
         assert isinstance(lkh, (float, np.floating, np.ndarray))
         assert hasattr(estimates, "dims")
 
-    def test_multiple_starting_points(self):
+    def test_multiple_starting_points(self, pdata):
         """Selection across starting points is the estimator's responsibility.
 
         Note `_format_parameters` builds ``starting_points + 1`` time parameter
@@ -212,7 +219,7 @@ class TestBackwardCompatibility:
         them drops the last proposal. That is pre-existing model behaviour,
         kept as-is here; the estimator simply evaluates every pair it is given.
         """
-        _, _, pdata_b, n_events = data()
+        pdata_b, n_events = pdata
 
         model = EventModel(n_events=n_events, starting_points=3)
         result = model.fit(pdata_b, verbose=False)
