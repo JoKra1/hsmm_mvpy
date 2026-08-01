@@ -129,7 +129,7 @@ class EMEstimator(BaseEstimator):
     def _em_star(self, args):  # for tqdm usage  #noqa
         return self.em(*args)
 
-    def em(  # noqa: PLR0912
+    def em(  # noqa: PLR0912, PLR0915
         self,
         model,
         pattern_data: PatternData,
@@ -164,11 +164,12 @@ class EMEstimator(BaseEstimator):
             ``(lkh, channel_pars, time_pars, traces, traces_group,
             time_pars_dev, n_iterations)``.
         """
-        lkh, eventprobs = model._estim_probs_groups(
+        eventprobs = model.event_probabilities(
             pattern_data,
             initial_channel_pars, initial_time_pars,
             groups, cpus=cpus
         )
+        lkh = eventprobs.likelihood
         data_groups = np.unique(groups)
         channel_pars = initial_channel_pars.copy()
         time_pars = initial_time_pars.copy()
@@ -239,11 +240,12 @@ class EMEstimator(BaseEstimator):
 
                 # Compute llk under new parameters
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    lkh, eventprobs = model._estim_probs_groups(
+                    eventprobs = model.event_probabilities(
                         pattern_data,
                         new_channel_pars, new_time_pars,
                         groups, cpus=cpus
                     )
+                    lkh = eventprobs.likelihood
 
                 # Stop if no update
                 if np.isclose((new_time_pars - time_pars).sum(), 0):

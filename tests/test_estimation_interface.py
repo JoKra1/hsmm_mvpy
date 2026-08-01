@@ -27,6 +27,23 @@ def pdata(projected):
     return PatternData.from_basedata(base_data), n_events
 
 
+@pytest.fixture(scope="module")
+def projected_all():
+    """Both participants, needed to exercise grouped models."""
+    _, _, epoch_data, _, _, n_events = init_data()
+    hmp_data = hmp.basedata.default(
+        epoch_data, n_comp=3, center=True, duration_id="response_time"
+    )
+    return hmp_data, n_events
+
+
+@pytest.fixture
+def pdata_all(projected_all):
+    """Build fresh PatternData over all trials from the shared projection."""
+    base_data, n_events = projected_all
+    return PatternData.from_basedata(base_data), n_events
+
+
 class MockEstimator(BaseEstimator):
     """Minimal estimator used to check that injection is honored."""
 
@@ -226,6 +243,84 @@ class TestBackwardCompatibility:
 
         assert len(result.diagnostics["lkhs"]) == model.starting_points
         assert result.likelihood == np.max(result.diagnostics["lkhs"])
+
+
+class TestLikelihoodSurface:
+    """The public contract an estimator scores parameters through."""
+
+    def test_per_trial_sums_to_total(self, pdata):
+        pdata_b, n_events = pdata
+        model = EventModel(n_events=n_events)
+        model.fit(pdata_b, verbose=False)
+
+        total = model.log_likelihood(pdata_b, model.channel_pars, model.time_pars)
+        per_trial = model.log_likelihood(
+            pdata_b, model.channel_pars, model.time_pars, per_trial=True
+        )
+
+        assert len(per_trial) == len(pdata_b.durations)
+        assert np.isclose(per_trial.sum(), total, atol=0, rtol=1e-12)
+
+    def test_matches_the_reported_fit(self, pdata):
+        """The public surface reproduces the likelihood the fit itself reported."""
+        pdata_b, n_events = pdata
+        model = EventModel(n_events=n_events)
+        model.fit(pdata_b, verbose=False)
+
+        assert model.log_likelihood(
+            pdata_b, model.channel_pars, model.time_pars
+        ) == model.lkhs
+
+    def test_evaluable_without_fitting(self, pdata):
+        """Samplers score arbitrary parameters, so neither entry point may need a fit."""
+        pdata_b, n_events = pdata
+        fitted = EventModel(n_events=n_events)
+        fitted.fit(pdata_b, verbose=False)
+
+        fresh = EventModel(n_events=n_events)
+        eventprobs = fresh.event_probabilities(
+            pdata_b, fitted.channel_pars, fitted.time_pars
+        )
+
+        assert eventprobs.dims == ("trial", "sample", "event")
+        assert np.isclose(
+            eventprobs.trial_lkh.sum(), eventprobs.likelihood, atol=0, rtol=1e-12
+        )
+
+    def test_grouped_per_trial_keeps_trial_order(self, pdata_all):
+        """Per-trial values must land on the trial they belong to, not the group.
+
+        Each group is scored on its own subset, so the results have to be scattered
+        back into the original trial order. Relabelling the groups and swapping the
+        parameters to match describes the same model, so every trial must keep its
+        value. A scatter that wrote results in group order would sum correctly but
+        fail here.
+        """
+        pdata_a, n_events = pdata_all
+        n_trials = len(pdata_a.durations)
+
+        reference = EventModel(n_events=n_events)
+        reference.fit(pdata_a, verbose=False)
+
+        grouped = EventModel(
+            n_events=n_events,
+            channel_map=np.zeros((2, n_events)),
+            time_map=np.zeros((2, n_events + 1)),
+            grouping_dict={"half": ["first", "second"]},
+        )
+        first = np.tile(reference.channel_pars, (2, 1, 1))
+        second = np.tile(reference.time_pars, (2, 1, 1))
+        second[1, :, 1] *= 1.05  # make the two groups genuinely differ
+
+        alternating = np.tile([0, 1], n_trials // 2)
+        as_labelled = grouped.log_likelihood(
+            pdata_a, first, second, groups=alternating, per_trial=True
+        )
+        as_relabelled = grouped.log_likelihood(
+            pdata_a, first[::-1], second[::-1], groups=1 - alternating, per_trial=True
+        )
+
+        assert np.allclose(as_labelled, as_relabelled, atol=0, rtol=1e-10)
 
 
 class TestParallelExecution:

@@ -320,9 +320,10 @@ class EventModel(BaseModel):
         self.lkhs = result.likelihood
         self.channel_pars = result.channel_pars
         self.time_pars = result.time_pars
-        self.traces = result.diagnostics["traces"]
-        self.traces_group = result.diagnostics["traces_group"]
-        self.time_pars_dev = result.diagnostics["time_pars_dev"]
+        # Iteration traces are specific to iterative estimators; a sampler has none.
+        self.traces = result.diagnostics.get("traces")
+        self.traces_group = result.diagnostics.get("traces_group")
+        self.time_pars_dev = result.diagnostics.get("time_pars_dev")
         self.group = groups
         return result
 
@@ -354,6 +355,94 @@ class EventModel(BaseModel):
         )
 
         return likelihoods, xreventprobs
+
+    def event_probabilities(
+        self,
+        pattern_data: PatternData,
+        channel_pars: np.ndarray,
+        time_pars: np.ndarray,
+        groups: np.ndarray = None,
+        cpus: int = 1,
+    ) -> xr.DataArray:
+        """
+        Event probabilities for an arbitrary set of parameters.
+
+        Unlike :meth:`transform`, this does not require the model to be fitted and does
+        not read the fitted parameters, so it can be evaluated at any point in parameter
+        space. Sampling-based estimators use it to obtain the by-trial event
+        probabilities implied by each posterior draw.
+
+        Parameters
+        ----------
+        pattern_data : PatternData
+            Preprocessed data cross-correlated with the pattern of the model.
+        channel_pars : np.ndarray
+            3D ndarray (n_groups * n_events * n_channels) of channel contributions.
+        time_pars : np.ndarray
+            3D ndarray (n_groups * n_stages * 2) of time distribution parameters.
+        groups : np.ndarray, optional
+            Array indicating the groups for grouping modeling. Default is None, in which
+            case groups are derived from the durations.
+        cpus : int, optional
+            Number of cores to use in multiprocessing functions. Default is 1.
+
+        Returns
+        -------
+        xr.DataArray
+            Probabilities with dimensions ("trial", "sample", "event"). The summed,
+            per-group and per-trial log-likelihoods are attached as the ``likelihood``,
+            ``group_lkh`` and ``trial_lkh`` attributes.
+        """
+        if groups is None:
+            _, groups, _ = self.group_constructor(pattern_data.durations)
+        _, eventprobs = self._estim_probs_groups(
+            pattern_data, channel_pars, time_pars, groups, cpus=cpus
+        )
+        return eventprobs
+
+    def log_likelihood(  # noqa: PLR0913, PLR0917
+        self,
+        pattern_data: PatternData,
+        channel_pars: np.ndarray,
+        time_pars: np.ndarray,
+        groups: np.ndarray = None,
+        cpus: int = 1,
+        per_trial: bool = False,
+    ) -> float | np.ndarray:
+        """
+        Log-likelihood of the data under the given parameters.
+
+        This is the model's contract with an estimator: everything an estimation method
+        needs in order to score a set of parameters, without reaching into the model's
+        internals.
+
+        Parameters
+        ----------
+        pattern_data : PatternData
+            Preprocessed data cross-correlated with the pattern of the model.
+        channel_pars : np.ndarray
+            3D ndarray (n_groups * n_events * n_channels) of channel contributions.
+        time_pars : np.ndarray
+            3D ndarray (n_groups * n_stages * 2) of time distribution parameters.
+        groups : np.ndarray, optional
+            Array indicating the groups for grouping modeling. Default is None, in which
+            case groups are derived from the durations.
+        cpus : int, optional
+            Number of cores to use in multiprocessing functions. Default is 1.
+        per_trial : bool, optional
+            If True, return the log-likelihood of each trial rather than their sum.
+            Pointwise values are required for model comparison such as LOO or WAIC,
+            which is how sampling-based fits compare numbers of events.
+
+        Returns
+        -------
+        float or np.ndarray
+            Summed log-likelihood, or a 1D array of length n_trials if ``per_trial``.
+        """
+        eventprobs = self.event_probabilities(
+            pattern_data, channel_pars, time_pars, groups, cpus=cpus
+        )
+        return eventprobs.trial_lkh if per_trial else eventprobs.likelihood
 
     @property
     def xrtraces(self):
@@ -609,6 +698,9 @@ class EventModel(BaseModel):
         eventprobs : np.ndarray
             A 3D array of shape (n_trials, max_samples, n_events) containing the probabilities
             for each event.
+        trial_loglikelihood : np.ndarray
+            A 1D array of length n_trials with the log probability of each trial, before
+            summing. Needed for pointwise model comparison such as LOO/WAIC.
         """
         n_events = channel_pars.shape[0]
         n_stages = n_events + 1
@@ -693,13 +785,14 @@ class EventModel(BaseModel):
             backward[: durations[trial], trial, :] = backward[: durations[trial], trial, :][::-1]
         eventprobs = forward * backward
         eventprobs = np.clip(eventprobs, 0, None)  # floating point precision error
-        likelihood = np.sum(
-            np.log(eventprobs[:, :, 0].sum(axis=0))
+        trial_likelihood = np.log(
+            eventprobs[:, :, 0].sum(axis=0)
         )  # sum over max_samples to avoid 0s in log
+        likelihood = np.sum(trial_likelihood)
         eventprobs = eventprobs / eventprobs.sum(axis=0)
         eventprobs[np.isnan(eventprobs)] = 0
         eventprobs = eventprobs.transpose((1,0,2))
-        return [likelihood, eventprobs]
+        return [likelihood, eventprobs, trial_likelihood]
 
     def _estim_probs_groups(
         self,
@@ -771,6 +864,11 @@ class EventModel(BaseModel):
 
         likelihood = np.array([x[0] for x in likes_events_group])
 
+        # Per-trial log-likelihood, scattered back into the original trial order
+        trial_likelihood = np.zeros(len(pattern_data.durations))
+        for cur_group in data_groups:
+            trial_likelihood[groups == cur_group] = likes_events_group[cur_group][2]
+
         # all_xreventprobs must have same order as pattern_data because
         # subset_epochs is used later on eventprobs!
         all_xreventprobs = xr.DataArray(np.zeros((len(pattern_data.durations), \
@@ -791,6 +889,7 @@ class EventModel(BaseModel):
         all_xreventprobs.attrs['event_width'] = len(pattern_data.template)
         all_xreventprobs.attrs['likelihood'] = np.sum(np.array(likelihood))
         all_xreventprobs.attrs['group_lkh'] = np.array(likelihood)
+        all_xreventprobs.attrs['trial_lkh'] = trial_likelihood
         all_xreventprobs.attrs['group_labels'] = self.group_labels
 
         return [likelihood.sum(), all_xreventprobs]
