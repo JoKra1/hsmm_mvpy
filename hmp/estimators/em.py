@@ -39,8 +39,8 @@ class EMEstimator(BaseEstimator):
     """
 
     def __init__(self, tolerance: float = 1e-4, max_iteration: int = 1e3,
-                 min_iteration: int = 1, n_cor: int = 30, **kwargs):
-        super().__init__(**kwargs)
+                 min_iteration: int = 1, n_cor: int = 30):
+        super().__init__()
         self.tolerance = tolerance
         self.max_iteration = max_iteration
         self.min_iteration = min_iteration
@@ -106,7 +106,7 @@ class EMEstimator(BaseEstimator):
             resetwarnings()
 
         lkhs = np.array([x[0] for x in estimates])
-        best = np.argmax(lkhs) if starting_points > 1 else 0
+        best = int(np.argmax(lkhs))
 
         if np.isneginf(lkhs.sum()):
             warn("Fit failed, inspect provided starting points")
@@ -116,15 +116,15 @@ class EMEstimator(BaseEstimator):
 
         self.fitted = True
         return EstimationResult(
-            channel_pars=np.array(channel_pars),
-            time_pars=np.array(time_pars),
+            channel_pars=channel_pars,
+            time_pars=time_pars,
             likelihood=lkh,
             converged=n_iter < self.max_iteration,
             n_iterations=n_iter,
             diagnostics={
-                "traces": np.array(traces),
-                "traces_group": np.array(traces_group),
-                "time_pars_dev": np.array(time_pars_dev),
+                "traces": traces,
+                "traces_group": traces_group,
+                "time_pars_dev": time_pars_dev,
                 "lkhs": lkhs,
             },
         )

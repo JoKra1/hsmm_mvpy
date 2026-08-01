@@ -141,7 +141,6 @@ class EventModel(BaseModel):
         self.grouping_dict = grouping_dict
         self.time_map = np.zeros((1, self.n_events + 1)) if time_map is None else time_map
         self.channel_map = np.zeros((1, self.n_events)) if channel_map is None else channel_map
-        self.n_cor = 30
 
     def _set_locations(self, location):
         """Set minimum distance between successive events."""
@@ -312,7 +311,6 @@ class EventModel(BaseModel):
                 tolerance=self.tolerance,
                 max_iteration=self.max_iteration,
                 min_iteration=self.min_iteration,
-                n_cor=self.n_cor,
             )
 
         result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)

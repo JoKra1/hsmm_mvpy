@@ -47,9 +47,8 @@ class BaseEstimator(ABC):
     must implement to work with HMP models.
     """
 
-    def __init__(self, **kwargs):
-        """Initialize the estimator with method-specific parameters."""
-        self.params = kwargs
+    def __init__(self):
+        """Initialize the estimator."""
         self.fitted = False
 
     @abstractmethod
