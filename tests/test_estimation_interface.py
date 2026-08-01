@@ -228,5 +228,46 @@ class TestBackwardCompatibility:
         assert result.likelihood == np.max(result.diagnostics["lkhs"])
 
 
+class TestParallelExecution:
+    """Spreading starting points over cpus must not change the answer."""
+
+    @staticmethod
+    def _starting_points(model, pattern_data, n_events, n_points=2):
+        """Build explicit starting points.
+
+        `gen_random_stages` draws from an unseeded `default_rng`, so letting the
+        model generate its own would give the two runs different starting points
+        and make the comparison meaningless.
+        """
+        n_dims = pattern_data.cross_corr.shape[1]
+        mean_duration = float(pattern_data.durations.mean())
+        channel_pars = np.zeros((n_points, 1, n_events, n_dims))
+        time_pars = np.zeros((n_points, 1, n_events + 1, 2))
+        for point in range(n_points):
+            time_pars[point, 0, :, 0] = model.distribution.shape
+            time_pars[point, 0, :, 1] = model.distribution.mean_to_scale(
+                mean_duration / (n_events + 1) * (1 + 0.1 * point)
+            )
+        return channel_pars, time_pars
+
+    def test_multiprocessing_matches_serial(self, pdata):
+        pdata_b, n_events = pdata
+        channel_pars, time_pars = self._starting_points(
+            EventModel(n_events=n_events), pdata_b, n_events
+        )
+
+        serial = EventModel(n_events=n_events)
+        serial.fit(pdata_b, channel_pars=channel_pars.copy(),
+                   time_pars=time_pars.copy(), verbose=False, cpus=1)
+
+        parallel = EventModel(n_events=n_events)
+        parallel.fit(pdata_b, channel_pars=channel_pars.copy(),
+                     time_pars=time_pars.copy(), verbose=False, cpus=2)
+
+        assert serial.lkhs == parallel.lkhs
+        assert np.array_equal(serial.time_pars, parallel.time_pars)
+        assert np.array_equal(serial.channel_pars, parallel.channel_pars)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

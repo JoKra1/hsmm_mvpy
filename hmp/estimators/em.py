@@ -84,7 +84,7 @@ class EMEstimator(BaseEstimator):
         """
         starting_points = len(initial_channel_pars)
 
-        if cpus > 1:
+        if cpus > 1 and starting_points > 1:
             inputs = zip(
                 itertools.repeat(model),
                 itertools.repeat(pattern_data),
@@ -93,13 +93,10 @@ class EMEstimator(BaseEstimator):
                 itertools.repeat(groups),
                 itertools.repeat(1),
             )
-            with mp.Pool(processes=cpus) as pool:
-                if starting_points > 1:
-                    estimates = list(tqdm(pool.imap(self._em_star, inputs),
-                                          total=len(initial_channel_pars)))
-                else:
-                    estimates = pool.starmap(self.em, inputs)
-        else:  # avoids problems if called in an already parallel function
+            with mp.Pool(processes=min(cpus, starting_points)) as pool:
+                estimates = list(tqdm(pool.imap(self._em_star, inputs),
+                                      total=starting_points))
+        else:  # nothing to spread, or already inside a parallel function
             estimates = []
             for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
                 estimates.append(self.em(model, pattern_data, c_pars, t_pars, groups, 1))
