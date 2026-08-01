@@ -27,6 +27,22 @@ def pdata(projected):
     return PatternData.from_basedata(base_data), n_events
 
 
+@pytest.fixture
+def pdata_f64(projected_all):
+    """All trials, in float64, for assertions about exact arithmetic.
+
+    The data is float32 by default, which caps agreement between two
+    differently accumulated sums at around 1e-7 however many trials there are,
+    so float64 keeps precision from being the thing under test. It also has to
+    be all the trials rather than one participant: a single participant here is
+    two identical noiseless trials, and adding a float to itself is exact, so
+    the comparison would hold in float32 too and could not detect the float64
+    path regressing.
+    """
+    base_data, n_events = projected_all
+    return PatternData.from_basedata(base_data, dtype=np.float64), n_events
+
+
 @pytest.fixture(scope="module")
 def projected_all():
     """Both participants, needed to exercise grouped models."""
@@ -248,8 +264,9 @@ class TestBackwardCompatibility:
 class TestLikelihoodSurface:
     """The public contract an estimator scores parameters through."""
 
-    def test_per_trial_sums_to_total(self, pdata):
-        pdata_b, n_events = pdata
+    def test_per_trial_sums_to_total(self, pdata_f64):
+        """The per-trial values must be the total, split up, not merely close to it."""
+        pdata_b, n_events = pdata_f64
         model = EventModel(n_events=n_events)
         model.fit(pdata_b, verbose=False)
 
