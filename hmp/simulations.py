@@ -388,7 +388,6 @@ def demo():
 
     file = "demo_dataset"  # Name of the file to save
 
-    event_width = int(((1 / frequency) / 2) * 1000)
     # Simulating and recover information on electrode location and true time of the simulated events
     files = simulate(
         sources, n_trials, cpus, file, path='sample_data', overwrite=overwrite, seed=seed,
