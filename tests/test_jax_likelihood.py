@@ -299,6 +299,56 @@ class TestMCMCEstimator:
                                 np.ones((1, 1, n_events + 1, 2)), groups=groups)
 
 
+class TestPosteriorAgreesWithEM:
+    """On data with enough trials the posterior should sit on the EM solution.
+
+    This is the check that the sampler is estimating the same thing EM does.
+    Absolute recovery of the simulated parameters is a question about HMP rather
+    than about this estimator: EM shows the same small upward offset on the
+    scales, so agreeing with EM is the claim that belongs here.
+    """
+
+    def test_posterior_concentrates_on_the_em_solution(self):
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+        from test_io import init_data_large
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        _, epoch_data, _, _, n_events = init_data_large()
+        hmp_data = hmp.basedata.default(
+            epoch_data, n_comp=3, center=True, duration_id="response_time"
+        )
+        pattern_data = PatternData.from_basedata(hmp_data, dtype=np.float64)
+
+        em = EventModel(n_events=n_events)
+        em.fit(pattern_data, verbose=False)
+
+        model = EventModel(n_events=n_events)
+        model.n_dims = pattern_data.cross_corr.shape[1]
+        _, groups, _ = model.group_constructor(pattern_data.durations, verbose=False)
+        channel_pars, time_pars = model._format_parameters(
+            None, None, groups, 1, pattern_data.durations, pattern_data.sfreq
+        )
+
+        estimator = MCMCEstimator(draws=500, tune=500, chains=2, random_seed=0)
+        result = estimator.fit(
+            model, pattern_data, channel_pars, time_pars, groups=groups
+        )
+
+        # 1.05 rather than the 1.01 wanted for reported results: this runs few
+        # draws to stay quick, which makes r_hat itself noisier
+        assert result.diagnostics["divergences"] == 0
+        assert result.diagnostics["max_rhat"] < 1.05
+
+        em_scales = np.asarray(em.time_pars[0], dtype=np.float64)[:, 1]
+        posterior_scales = result.time_pars[0][:, 1]
+        posterior_sd = result.uncertainty["scale_sd"]
+
+        # every scale within one posterior standard deviation of EM's
+        assert np.all(np.abs(posterior_scales - em_scales) < posterior_sd)
+
+
 class TestParameterPrecision:
     """Why comparisons against the numpy likelihood have to use float64 parameters."""
 
