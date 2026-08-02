@@ -671,6 +671,7 @@ class EventModel(BaseModel):
         channel_pars: np.ndarray,
         time_pars: np.ndarray,
         subset_epochs: list[int] | None = None,
+        intermediates: dict | None = None,
     ) -> tuple[float, np.ndarray]:
         """
         Estimate probabilities for events and compute the log-likelihood.
@@ -690,6 +691,10 @@ class EventModel(BaseModel):
         subset_epochs : list[int] or None, optional
             A list of trial indices to consider for the computation. If None, all trials
             are used. Default is None.
+        intermediates : dict or None, optional
+            If given, is filled with the internal arrays of the forward-backward pass.
+            Only intended for checking a reimplementation of this function stage by
+            stage, and has no effect on the returned values.
 
         Returns
         -------
@@ -783,12 +788,22 @@ class EventModel(BaseModel):
         backward = backward[:, :, ::-1]  # undoes stage inversion
         for trial in np.arange(n_trials):  # Undoes sample inversion
             backward[: durations[trial], trial, :] = backward[: durations[trial], trial, :][::-1]
-        eventprobs = forward * backward
-        eventprobs = np.clip(eventprobs, 0, None)  # floating point precision error
+        eventprobs_raw = forward * backward
+        eventprobs = np.clip(eventprobs_raw, 0, None)  # floating point precision error
         trial_likelihood = np.log(
             eventprobs[:, :, 0].sum(axis=0)
         )  # sum over max_samples to avoid 0s in log
         likelihood = np.sum(trial_likelihood)
+
+        if intermediates is not None:
+            intermediates.update(
+                gains=gains, probs=probs, probs_b=probs_b, pmf=pmf, pmf_b=pmf_b,
+                forward=forward, backward=backward, eventprobs_unnormalised=eventprobs,
+                trial_likelihood=trial_likelihood, likelihood=likelihood,
+                durations=durations, max_duration=max_duration,
+                locations_samples=locations_samples,
+                n_clipped=int(np.sum(eventprobs_raw < 0)),
+            )
         eventprobs = eventprobs / eventprobs.sum(axis=0)
         eventprobs[np.isnan(eventprobs)] = 0
         eventprobs = eventprobs.transpose((1,0,2))
