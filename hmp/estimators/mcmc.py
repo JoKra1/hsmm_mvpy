@@ -71,8 +71,14 @@ class MCMCEstimator(BaseEstimator):
         """Report that this estimator provides uncertainty."""
         return True
 
-    def build_model(self, model, pattern_data):
+    def build_model(self, model, pattern_data, groups=None):
         """Build the PyMC model for a set of HMP parameters.
+
+        Parameters sharing an entry in the model's channel or time map are one
+        random variable indexed into several positions, rather than several
+        variables reconciled afterwards. The sampler therefore moves in the free
+        parameter space and the sharing holds by construction, which projecting
+        a proposal onto the constraint would not achieve.
 
         Returns
         -------
@@ -81,35 +87,60 @@ class MCMCEstimator(BaseEstimator):
         import pymc as pm  # noqa: PLC0415
         import pytensor.tensor as pt  # noqa: PLC0415
 
-        n_events = model.n_events
-        n_stages = n_events + 1
         n_dims = np.asarray(pattern_data.cross_corr).shape[1]
         shape = float(model.distribution.shape)
 
-        op = build_op(pattern_data, model)
+        channel_map = np.atleast_2d(np.asarray(model.channel_map)).astype(int)
+        time_map = np.atleast_2d(np.asarray(model.time_map)).astype(int)
+        n_groups = channel_map.shape[0]
+
+        if n_groups > 1 and (channel_map.min() < 0 or time_map.min() < 0):
+            raise NotImplementedError(
+                "Groups that omit events are not supported yet; every entry of "
+                "channel_map and time_map must be non-negative."
+            )
+
+        if groups is None:
+            groups = np.zeros(len(pattern_data.durations), dtype=int)
+        groups = np.asarray(groups)
+
+        subsets = [groups == group for group in range(n_groups)]
+        ops = [build_op(pattern_data, model, subset=subset) for subset in subsets]
 
         channel_sd = self.channel_prior_sd
         if channel_sd is None:
             channel_sd = float(np.std(np.asarray(pattern_data.cross_corr))) or 1.0
 
-        # centre the scale prior where an even split of the trial would put it
-        mean_duration = float(np.mean(op.durations))
-        even_scale = float(model.distribution.mean_to_scale(mean_duration / n_stages))
+        # centre the scale prior where an even split of a trial would put it
+        mean_duration = float(np.mean(np.concatenate([op.durations for op in ops])))
+        even_scale = float(
+            model.distribution.mean_to_scale(mean_duration / time_map.shape[1])
+        )
+
+        channel_index, n_channel_shared, _ = self._tie_index(channel_map)
+        time_index, n_time_shared, _ = self._tie_index(time_map)
 
         with pm.Model() as pymc_model:
-            channel_pars = pm.Normal(
-                "channel_pars", mu=0.0, sigma=channel_sd, shape=(n_events, n_dims)
+            # one variable per distinct parameter, indexed into position
+            shared_channel = pm.Normal(
+                "channel_pars", mu=0.0, sigma=channel_sd,
+                shape=(n_channel_shared, n_dims),
             )
-            log_scale = pm.Normal(
-                "log_scale", mu=np.log(even_scale), sigma=1.0, shape=n_stages
+            shared_log_scale = pm.Normal(
+                "log_scale", mu=np.log(even_scale), sigma=1.0, shape=n_time_shared
             )
-            scale = pm.Deterministic("scale", pt.exp(log_scale))
+            shared_scale = pm.Deterministic("scale", pt.exp(shared_log_scale))
 
-            time_pars = pt.stack(
-                [pt.fill(scale, shape), scale], axis=1
-            )  # (n_stages, 2), shape held fixed
+            total = 0
+            for group in range(n_groups):
+                channel_group = shared_channel[channel_index[group]]
+                scale_group = shared_scale[time_index[group]]
+                time_group = pt.stack(
+                    [pt.fill(scale_group, shape), scale_group], axis=1
+                )  # shape of the duration distribution is held, not sampled
+                total = total + ops[group](channel_group, time_group)
 
-            pm.Potential("hmp_likelihood", op(channel_pars, time_pars))
+            pm.Potential("hmp_likelihood", total)
 
         self._even_scale = even_scale
         return pymc_model
@@ -138,14 +169,9 @@ class MCMCEstimator(BaseEstimator):
         """
         import pymc as pm  # noqa: PLC0415
 
-        if groups is not None and len(np.unique(groups)) > 1:
-            raise NotImplementedError(
-                "MCMCEstimator currently supports single-group models only."
-            )
+        pymc_model = self.build_model(model, pattern_data, groups)
 
-        pymc_model = self.build_model(model, pattern_data)
-
-        initvals = self._initial_values(initial_channel_pars, initial_time_pars)
+        initvals = self._initial_values(model, initial_channel_pars, initial_time_pars)
 
         with pymc_model:
             idata = pm.sample(
@@ -209,37 +235,89 @@ class MCMCEstimator(BaseEstimator):
         chosen = rng.choice(available, size=min(n_draws, available), replace=False)
 
         shape = float(model.distribution.shape)
+        channel_index, _, _ = self._tie_index(
+            np.atleast_2d(np.asarray(model.channel_map)).astype(int)
+        )
+        time_index, _, _ = self._tie_index(
+            np.atleast_2d(np.asarray(model.time_map)).astype(int)
+        )
+
         probabilities = []
         for index in chosen:
-            channel_pars = np.asarray(
+            shared_channel = np.asarray(
                 channel_draws.isel(pooled=index).values, dtype=np.float64
             )
-            scale = np.asarray(scale_draws.isel(pooled=index).values, dtype=np.float64)
-            time_pars = np.column_stack([np.full(scale.shape, shape), scale])
+            shared_scale = np.asarray(
+                scale_draws.isel(pooled=index).values, dtype=np.float64
+            )
+            # expand the shared values back out to one entry per group
+            channel_pars = shared_channel[channel_index]
+            scale = shared_scale[time_index]
+            time_pars = np.stack([np.full(scale.shape, shape), scale], axis=-1)
             probabilities.append(
                 model.event_probabilities(
-                    pattern_data,
-                    channel_pars[np.newaxis, ...],
-                    time_pars[np.newaxis, ...],
-                    groups,
+                    pattern_data, channel_pars, time_pars, groups
                 ).values
             )
         return np.stack(probabilities)
 
-    def _initial_values(self, initial_channel_pars, initial_time_pars):
-        """One starting point per chain, taken from what the model generated."""
+    @staticmethod
+    def _tie_index(codes):
+        """Give every distinct parameter in a map its own index.
+
+        Codes are compared down each column, not across the whole map: groups
+        carrying the same code at a given event share that event's parameter,
+        while the same code at a different event is a different parameter. This
+        matches how the maps are read when parameters are tied during EM.
+
+        Returns
+        -------
+        index : (n_groups, n_positions) ndarray
+            Where each group and position reads its value from.
+        n_distinct : int
+        first_seen : list of (group, position)
+            Where each distinct parameter first appears.
+        """
+        codes = np.asarray(codes)
+        index = np.zeros(codes.shape, dtype=int)
+        first_seen = []
+        for position in range(codes.shape[1]):
+            column = codes[:, position]
+            for code in np.unique(column):
+                shared_by = column == code
+                index[shared_by, position] = len(first_seen)
+                first_seen.append((int(np.argmax(shared_by)), position))
+        return index, len(first_seen), first_seen
+
+    def _initial_values(self, model, initial_channel_pars, initial_time_pars):
+        """One starting point per chain, taken from what the model generated.
+
+        The starting points are laid out per group, while the variables are per
+        distinct code, so each shared value is read from the first position
+        carrying that code.
+        """
         channel = np.asarray(initial_channel_pars, dtype=np.float64)
         time = np.asarray(initial_time_pars, dtype=np.float64)
         n_available = min(len(channel), len(time))
 
+        channel_map = np.atleast_2d(np.asarray(model.channel_map)).astype(int)
+        time_map = np.atleast_2d(np.asarray(model.time_map)).astype(int)
+        _, _, channel_at = self._tie_index(channel_map)
+        _, _, time_at = self._tie_index(time_map)
+
         initvals = []
         for chain in range(self.chains):
             source = chain % n_available
-            scale = time[source][0][:, 1]
+            channel_start = np.stack(
+                [channel[source][group][event] for group, event in channel_at]
+            )
+            scale_start = np.array(
+                [time[source][group][stage][1] for group, stage in time_at]
+            )
             initvals.append(
                 {
-                    "channel_pars": channel[source][0],
-                    "log_scale": np.log(np.clip(scale, 1e-6, None)),
+                    "channel_pars": channel_start,
+                    "log_scale": np.log(np.clip(scale_start, 1e-6, None)),
                 }
             )
         return initvals
@@ -249,11 +327,20 @@ class MCMCEstimator(BaseEstimator):
         import arviz as az  # noqa: PLC0415
 
         posterior = idata.posterior
-        channel_mean = posterior["channel_pars"].mean(dim=("chain", "draw")).values
-        scale_mean = posterior["scale"].mean(dim=("chain", "draw")).values
+        shared_channel = posterior["channel_pars"].mean(dim=("chain", "draw")).values
+        shared_scale = posterior["scale"].mean(dim=("chain", "draw")).values
         shape = float(model.distribution.shape)
 
-        time_mean = np.column_stack([np.full(scale_mean.shape, shape), scale_mean])
+        # expand the shared values back out to one entry per group
+        channel_map = np.atleast_2d(np.asarray(model.channel_map)).astype(int)
+        time_map = np.atleast_2d(np.asarray(model.time_map)).astype(int)
+        channel_index, _, _ = self._tie_index(channel_map)
+        time_index, _, _ = self._tie_index(time_map)
+        channel_mean = shared_channel[channel_index]
+        scale_mean = shared_scale[time_index]
+        time_mean = np.stack(
+            [np.full(scale_mean.shape, shape), scale_mean], axis=-1
+        )
 
         variables = ["channel_pars", "scale"]
         summary = az.summary(idata, var_names=variables)
@@ -265,10 +352,12 @@ class MCMCEstimator(BaseEstimator):
         min_ess = float(min(float(ess[name].min()) for name in variables))
         divergences = int(idata.sample_stats["diverging"].sum())
 
+        shared_channel_sd = posterior["channel_pars"].std(dim=("chain", "draw")).values
+        shared_scale_sd = posterior["scale"].std(dim=("chain", "draw")).values
+
         return EstimationResult(
-            # leading axis of 1 is the group dimension the model expects
-            channel_pars=channel_mean[np.newaxis, ...],
-            time_pars=time_mean[np.newaxis, ...],
+            channel_pars=channel_mean,
+            time_pars=time_mean,
             likelihood=float(np.max(idata.sample_stats["lp"].values)),
             converged=bool(max_rhat < 1.01 and divergences == 0),
             n_iterations=int(self.draws * self.chains),
@@ -280,9 +369,7 @@ class MCMCEstimator(BaseEstimator):
                 "summary": summary,
             },
             uncertainty={
-                "channel_pars_sd": posterior["channel_pars"]
-                .std(dim=("chain", "draw"))
-                .values[np.newaxis, ...],
-                "scale_sd": posterior["scale"].std(dim=("chain", "draw")).values,
+                "channel_pars_sd": shared_channel_sd[channel_index],
+                "scale_sd": shared_scale_sd[time_index],
             },
         )

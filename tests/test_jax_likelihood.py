@@ -319,18 +319,88 @@ class TestMCMCEstimator:
         # each draw, trial and event is a distribution over samples
         assert np.allclose(probabilities.sum(axis=2), 1.0, atol=1e-10)
 
-    def test_grouped_models_are_refused(self, fitted_setup):
+class TestParameterTying:
+    """Codes in the maps are compared down each column, not across the map.
+
+    Groups carrying the same code at a given event share that event's parameter,
+    while the same code at a different event is a different parameter. Reading
+    them as global identifiers would tie every event together whenever the map
+    is all zeros, which is the default.
+    """
+
+    def test_default_map_gives_one_parameter_per_event(self):
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        model = EventModel(n_events=3)
+        index, n_distinct, _ = MCMCEstimator._tie_index(
+            np.atleast_2d(np.asarray(model.channel_map)).astype(int)
+        )
+        assert n_distinct == 3
+        assert index.tolist() == [[0, 1, 2]]
+
+    def test_shared_prefix_across_groups(self):
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        # first two events shared by all three groups, the rest per group
+        channel_map = np.array([[0, 0, 0], [0, 0, 1], [0, 0, 2]])
+        index, n_distinct, first_seen = MCMCEstimator._tie_index(channel_map)
+
+        assert index[:, 0].tolist() == [0, 0, 0]
+        assert index[:, 1].tolist() == [1, 1, 1]
+        assert len(set(index[:, 2].tolist())) == 3
+        assert n_distinct == 5
+        assert len(first_seen) == n_distinct
+
+    def test_grouped_model_samples(self, fitted_setup):
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        n_dims = pattern_data.cross_corr.shape[1]
+        # two groups sharing the first event, differing on the rest
+        channel_map = np.array([[0, 0, 0], [0, 1, 1]])
+        time_map = np.array([[0, 0, 0, 0], [0, 1, 1, 1]])
+        model = EventModel(
+            n_events=n_events, channel_map=channel_map, time_map=time_map,
+            grouping_dict={"condition": ["a", "b"]},
+        )
+        model.n_dims = n_dims
+
+        groups = np.arange(len(pattern_data.durations)) % 2
+        channel_pars, time_pars = model._format_parameters(
+            None, None, groups, 2, pattern_data.durations, pattern_data.sfreq
+        )
+
+        estimator = MCMCEstimator(draws=100, tune=100, chains=2, random_seed=0)
+        result = estimator.fit(
+            model, pattern_data, channel_pars, time_pars, groups=groups
+        )
+
+        assert result.channel_pars.shape == (2, n_events, n_dims)
+        assert result.time_pars.shape == (2, n_events + 1, 2)
+        # the shared first event must come out identical in both groups
+        assert np.array_equal(result.channel_pars[0, 0], result.channel_pars[1, 0])
+        assert result.time_pars[0][0, 1] == result.time_pars[1][0, 1]
+        # the unshared ones must not
+        assert not np.array_equal(result.channel_pars[0, 1], result.channel_pars[1, 1])
+
+    def test_groups_omitting_events_are_refused(self, fitted_setup):
         pytest.importorskip("pymc")
         from hmp.estimators.mcmc import MCMCEstimator
 
         pattern_data, _, n_events = fitted_setup
-        model = EventModel(n_events=n_events)
+        model = EventModel(
+            n_events=n_events,
+            channel_map=np.array([[0, 0, 0], [0, 0, -1]]),
+            time_map=np.array([[0, 0, 0, 0], [0, 0, 0, 0]]),
+            grouping_dict={"condition": ["a", "b"]},
+        )
         model.n_dims = pattern_data.cross_corr.shape[1]
-        groups = np.arange(len(pattern_data.durations)) % 2
 
-        with pytest.raises(NotImplementedError, match="single-group"):
-            MCMCEstimator().fit(model, pattern_data, np.zeros((1, 1, n_events, 3)),
-                                np.ones((1, 1, n_events + 1, 2)), groups=groups)
+        with pytest.raises(NotImplementedError, match="omit events"):
+            MCMCEstimator().build_model(model, pattern_data)
 
 
 class TestPosteriorAgreesWithEM:
