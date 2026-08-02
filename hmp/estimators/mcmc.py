@@ -163,6 +163,69 @@ class MCMCEstimator(BaseEstimator):
         self.fitted = True
         return self._summarise(idata, model)
 
+    def posterior_event_probabilities(  # noqa: PLR0913, PLR0917
+        self,
+        model,
+        pattern_data,
+        n_draws: int = 100,
+        groups: np.ndarray = None,
+        random_seed: int = None,
+    ):
+        """Event probabilities implied by each of a sample of posterior draws.
+
+        A fit gives one set of by-trial event probabilities, at one set of
+        parameters. Sampling gives a distribution over them, which carries the
+        parameter uncertainty into the quantity the method exists to estimate.
+
+        Computed on request rather than during sampling, because the result is
+        ``(draws, trials, samples, events)`` and only some of it is usually
+        wanted.
+
+        Parameters
+        ----------
+        model : EventModel
+        pattern_data : PatternData
+        n_draws : int, optional
+            How many posterior draws to evaluate, sampled without replacement
+            from all chains. Default is 100.
+        groups : np.ndarray, optional
+            Passed through to the model.
+        random_seed : int, optional
+            Seed for choosing which draws to use.
+
+        Returns
+        -------
+        (n_draws, n_trials, n_samples, n_events) ndarray
+        """
+        if self.idata is None:
+            raise ValueError("Nothing sampled yet, call fit first.")
+
+        posterior = self.idata.posterior
+        channel_draws = posterior["channel_pars"].stack(pooled=("chain", "draw"))
+        scale_draws = posterior["scale"].stack(pooled=("chain", "draw"))
+        available = channel_draws.sizes["pooled"]
+
+        rng = np.random.default_rng(random_seed)
+        chosen = rng.choice(available, size=min(n_draws, available), replace=False)
+
+        shape = float(model.distribution.shape)
+        probabilities = []
+        for index in chosen:
+            channel_pars = np.asarray(
+                channel_draws.isel(pooled=index).values, dtype=np.float64
+            )
+            scale = np.asarray(scale_draws.isel(pooled=index).values, dtype=np.float64)
+            time_pars = np.column_stack([np.full(scale.shape, shape), scale])
+            probabilities.append(
+                model.event_probabilities(
+                    pattern_data,
+                    channel_pars[np.newaxis, ...],
+                    time_pars[np.newaxis, ...],
+                    groups,
+                ).values
+            )
+        return np.stack(probabilities)
+
     def _initial_values(self, initial_channel_pars, initial_time_pars):
         """One starting point per chain, taken from what the model generated."""
         channel = np.asarray(initial_channel_pars, dtype=np.float64)

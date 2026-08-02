@@ -285,6 +285,40 @@ class TestMCMCEstimator:
         recomputed = max(float(rhat[name].max()) for name in variables)
         assert result.diagnostics["max_rhat"] == pytest.approx(recomputed, abs=1e-12)
 
+    def test_posterior_event_probabilities(self, fitted_setup):
+        """Each draw implies its own by-trial event probabilities."""
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        model = EventModel(n_events=n_events)
+        model.n_dims = pattern_data.cross_corr.shape[1]
+        _, groups, _ = model.group_constructor(pattern_data.durations, verbose=False)
+        channel_pars, time_pars = model._format_parameters(
+            None, None, groups, 1, pattern_data.durations, pattern_data.sfreq
+        )
+
+        estimator = MCMCEstimator(draws=100, tune=100, chains=2, random_seed=0)
+
+        with pytest.raises(ValueError, match="fit"):
+            estimator.posterior_event_probabilities(model, pattern_data)
+
+        estimator.fit(model, pattern_data, channel_pars, time_pars, groups=groups)
+        probabilities = estimator.posterior_event_probabilities(
+            model, pattern_data, n_draws=10, groups=groups, random_seed=0
+        )
+
+        n_trials = len(pattern_data.durations)
+        assert probabilities.shape[0] == 10
+        assert probabilities.shape[1] == n_trials
+        assert probabilities.shape[3] == n_events
+        assert np.isfinite(probabilities).all()
+        assert (probabilities >= 0).all()
+        # each draw, trial and event is a distribution over samples
+        assert np.allclose(probabilities.sum(axis=2), 1.0, atol=1e-10)
+
     def test_grouped_models_are_refused(self, fitted_setup):
         pytest.importorskip("pymc")
         from hmp.estimators.mcmc import MCMCEstimator
