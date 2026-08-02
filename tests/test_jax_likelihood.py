@@ -275,6 +275,16 @@ class TestMCMCEstimator:
             assert key in result.diagnostics
         assert set(result.uncertainty) == {"channel_pars_sd", "scale_sd"}
 
+        # the reported r_hat has to be the diagnostic itself, not the value from
+        # az.summary, which rounds to two decimals and so cannot be compared
+        # against a 1.01 threshold
+        import arviz as az
+
+        variables = ["channel_pars", "scale"]
+        rhat = az.rhat(result.diagnostics["idata"], var_names=variables)
+        recomputed = max(float(rhat[name].max()) for name in variables)
+        assert result.diagnostics["max_rhat"] == pytest.approx(recomputed, abs=1e-12)
+
     def test_grouped_models_are_refused(self, fitted_setup):
         pytest.importorskip("pymc")
         from hmp.estimators.mcmc import MCMCEstimator

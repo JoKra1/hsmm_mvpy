@@ -192,9 +192,14 @@ class MCMCEstimator(BaseEstimator):
 
         time_mean = np.column_stack([np.full(scale_mean.shape, shape), scale_mean])
 
-        summary = az.summary(idata, var_names=["channel_pars", "scale"])
-        max_rhat = float(summary["r_hat"].max())
-        min_ess = float(summary["ess_bulk"].min())
+        variables = ["channel_pars", "scale"]
+        summary = az.summary(idata, var_names=variables)
+        # from the diagnostics themselves rather than from the summary table,
+        # which rounds to two decimals and so cannot be compared against 1.01
+        rhat = az.rhat(idata, var_names=variables)
+        ess = az.ess(idata, var_names=variables)
+        max_rhat = float(max(float(rhat[name].max()) for name in variables))
+        min_ess = float(min(float(ess[name].min()) for name in variables))
         divergences = int(idata.sample_stats["diverging"].sum())
 
         return EstimationResult(
