@@ -271,7 +271,8 @@ class TestMCMCEstimator:
         assert result.time_pars.shape == (1, n_events + 1, 2)
         # the shape of the duration distribution is held, not sampled
         assert np.allclose(result.time_pars[0][:, 0], model.distribution.shape)
-        for key in ("idata", "max_rhat", "min_ess", "divergences"):
+        for key in ("idata", "max_rhat", "min_ess", "divergences",
+                    "separated_modes", "chain_lp_spread"):
             assert key in result.diagnostics
         assert set(result.uncertainty) == {"channel_pars_sd", "scale_sd"}
 
@@ -504,6 +505,56 @@ class TestPosteriorAgreesWithEM:
 
         # every scale within one posterior standard deviation of EM's
         assert np.all(np.abs(posterior_scales - em_scales) < posterior_sd)
+
+
+class TestMultimodality:
+    """A misspecified number of events makes the posterior multimodal.
+
+    The events can attach to different features of the data, so chains settle at
+    different log probabilities. r_hat reports the disagreement but not the
+    reason, and more draws do not fix this one, so the estimator reports whether
+    the chains are separated rather than merely mixing slowly.
+    """
+
+    def test_separated_modes_flagged_when_events_misspecified(self):
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+        from test_io import init_data_large
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        _, epoch_data, _, _, n_events = init_data_large()
+        hmp_data = hmp.basedata.default(
+            epoch_data, n_comp=3, center=True, duration_id="response_time"
+        )
+        pattern_data = PatternData.from_basedata(hmp_data, dtype=np.float64)
+
+        outcomes = {}
+        for candidate in (1, n_events):
+            model = EventModel(n_events=candidate)
+            model.n_dims = pattern_data.cross_corr.shape[1]
+            _, groups, _ = model.group_constructor(
+                pattern_data.durations, verbose=False
+            )
+            channel_pars, time_pars = model._format_parameters(
+                None, None, groups, 1, pattern_data.durations, pattern_data.sfreq
+            )
+            estimator = MCMCEstimator(draws=300, tune=300, chains=2, random_seed=0)
+            outcomes[candidate] = estimator.fit(
+                model, pattern_data, channel_pars, time_pars, groups=groups
+            )
+
+        correct = outcomes[n_events]
+        misspecified = outcomes[1]
+
+        # the right number of events gives one mode and a usable fit
+        assert not correct.diagnostics["separated_modes"]
+        assert correct.diagnostics["max_rhat"] < 1.05
+
+        # the wrong number does not, and says so rather than only failing r_hat
+        assert misspecified.diagnostics["separated_modes"]
+        assert (misspecified.diagnostics["chain_lp_spread"]
+                > correct.diagnostics["chain_lp_spread"])
 
 
 class TestParameterPrecision:

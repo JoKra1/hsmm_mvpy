@@ -166,6 +166,13 @@ class MCMCEstimator(BaseEstimator):
             ``channel_pars`` and ``time_pars`` hold the posterior mean, shaped
             as the model expects. ``uncertainty`` holds posterior standard
             deviations, and ``diagnostics["idata"]`` the full InferenceData.
+
+            ``diagnostics["separated_modes"]`` is worth reading whenever the fit
+            does not converge. The posterior is multimodal when the number of
+            events is misspecified, since the events can attach to different
+            features of the data, and chains then settle in different modes.
+            More draws do not help with that; a different number of events, or
+            treating the modes separately, does.
         """
         import pymc as pm  # noqa: PLC0415
 
@@ -352,6 +359,18 @@ class MCMCEstimator(BaseEstimator):
         min_ess = float(min(float(ess[name].min()) for name in variables))
         divergences = int(idata.sample_stats["diverging"].sum())
 
+        # A high r_hat says the chains disagree but not why. Chains settled at
+        # log probabilities far apart relative to their own spread are in
+        # different modes, which more draws will not fix; chains at the same
+        # level are merely mixing slowly, which more draws will.
+        log_probability = idata.sample_stats["lp"].values
+        chain_levels = log_probability.mean(axis=1)
+        within_chain = float(log_probability.std(axis=1).mean())
+        level_spread = float(chain_levels.max() - chain_levels.min())
+        separated_modes = bool(
+            log_probability.shape[0] > 1 and level_spread > 5 * max(within_chain, 1e-12)
+        )
+
         shared_channel_sd = posterior["channel_pars"].std(dim=("chain", "draw")).values
         shared_scale_sd = posterior["scale"].std(dim=("chain", "draw")).values
 
@@ -367,6 +386,9 @@ class MCMCEstimator(BaseEstimator):
                 "min_ess": min_ess,
                 "divergences": divergences,
                 "summary": summary,
+                "separated_modes": separated_modes,
+                "chain_lp_spread": level_spread,
+                "chain_lp": chain_levels,
             },
             uncertainty={
                 "channel_pars_sd": shared_channel_sd[channel_index],
