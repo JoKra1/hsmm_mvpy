@@ -625,8 +625,10 @@ class EventModel(BaseModel):
         np.ndarray
             A 2D array where each row contains the shape and scale parameters for a stage.
         """
-        rnd_durations = np.zeros(n_events + 1)
-        while any(rnd_durations < max(self._time_to_samples(self.locations,sfreq))):
+        # at least one sample: a zero-length stage has a zero scale, which is not
+        # a usable parameter value whatever the censoring asks for
+        minimum_duration = max(1, *self._time_to_samples(self.locations, sfreq))
+        while True:
             rnd_events = np.random.default_rng().integers(
                 low=0, high=self.max_duration, size=n_events
             )  # n_events between 0 and mean_d
@@ -634,6 +636,11 @@ class EventModel(BaseModel):
             rnd_durations = np.hstack((rnd_events, self.max_duration)) - np.hstack(
                 (0, rnd_events)
             )  # associated durations
+            # drawing at least once: testing the condition first left the
+            # durations at zero whenever every location is zero, which is the
+            # case for a single event
+            if not any(rnd_durations < minimum_duration):
+                break
         random_stages = np.array(
             [[self.distribution.shape, self.distribution.mean_to_scale(x)] for x in rnd_durations]
         )
