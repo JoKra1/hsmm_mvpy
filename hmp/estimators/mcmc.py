@@ -35,7 +35,9 @@ class MCMCEstimator(BaseEstimator):
         NUTS target acceptance rate. Default is 0.9.
     channel_prior_sd : float, optional
         Standard deviation of the normal prior on channel contributions. If
-        None, taken from the scale of the cross-correlated data.
+        None, several times the spread of the cross-correlated data, which is
+        wide enough not to shrink the estimates. Still provisional: the priors
+        for this method have not been settled.
     nuts_sampler : str, optional
         Passed to ``pm.sample``. "numpyro" compiles the whole graph to JAX and
         is much faster; "pymc" uses the default backend and the gradient Op,
@@ -46,6 +48,10 @@ class MCMCEstimator(BaseEstimator):
     progressbar : bool, optional
         Show the sampling progress bar. Default is False.
     """
+
+    #: How much wider than the data the default channel prior is. Chosen so the
+    #: prior does not shrink the estimates; see channel_prior_sd.
+    CHANNEL_PRIOR_WIDTH = 10.0
 
     def __init__(  # noqa: PLR0913, PLR0917
         self,
@@ -111,7 +117,13 @@ class MCMCEstimator(BaseEstimator):
 
         channel_sd = self.channel_prior_sd
         if channel_sd is None:
+            # Several times the spread of the data rather than equal to it.
+            # Channel contributions run well beyond that spread, so a prior at
+            # the data scale pulls them towards zero: on the simulated data the
+            # magnitudes came out shrunk and the error was larger than EM's,
+            # and widening the prior removed both.
             channel_sd = float(np.std(np.asarray(pattern_data.cross_corr))) or 1.0
+            channel_sd *= self.CHANNEL_PRIOR_WIDTH
 
         # centre the scale prior where an even split of a trial would put it
         mean_duration = float(np.mean(np.concatenate([op.durations for op in ops])))

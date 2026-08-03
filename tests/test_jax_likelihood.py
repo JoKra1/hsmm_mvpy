@@ -240,7 +240,8 @@ class TestMCMCEstimator:
         time_pars = np.column_stack([np.full(scale.shape, shape), scale])
         likelihood = float(op._call_jax(channel_pars, time_pars))
 
-        channel_sd = float(np.std(np.asarray(pattern_data.cross_corr)))
+        channel_sd = float(np.std(np.asarray(pattern_data.cross_corr))) * \
+            MCMCEstimator.CHANNEL_PRIOR_WIDTH
         priors = (
             stats.norm.logpdf(channel_pars, 0.0, channel_sd).sum()
             + stats.norm.logpdf(np.log(scale), np.log(estimator._even_scale), 1.0).sum()
@@ -389,7 +390,8 @@ class TestParameterTying:
             total = float(pymc_model.compile_logp()(
                 {"channel_pars": shared_channel, "log_scale": np.log(shared_scale)}
             ))
-            channel_sd = float(np.std(np.asarray(pattern_data.cross_corr)))
+            channel_sd = float(np.std(np.asarray(pattern_data.cross_corr))) * \
+            MCMCEstimator.CHANNEL_PRIOR_WIDTH
             priors = (
                 stats.norm.logpdf(shared_channel, 0.0, channel_sd).sum()
                 + stats.norm.logpdf(
