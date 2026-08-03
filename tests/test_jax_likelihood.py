@@ -287,6 +287,35 @@ class TestMCMCEstimator:
         recomputed = max(float(rhat[name].max()) for name in variables)
         assert result.diagnostics["max_rhat"] == pytest.approx(recomputed, abs=1e-12)
 
+    def test_default_backend_samples(self, fitted_setup):
+        """The default backend must sample rather than hang.
+
+        It runs chains in forked processes, and forking after JAX has been used
+        deadlocks instead of raising, so this path once hung indefinitely with
+        no error. Chains are run sequentially there to avoid it.
+        """
+        pytest.importorskip("pymc")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        model = EventModel(n_events=n_events)
+        model.n_dims = pattern_data.cross_corr.shape[1]
+        _, groups, _ = model.group_constructor(pattern_data.durations, verbose=False)
+        channel_pars, time_pars = model._format_parameters(
+            None, None, groups, 1, pattern_data.durations, pattern_data.sfreq
+        )
+
+        estimator = MCMCEstimator(draws=25, tune=25, chains=2, random_seed=0,
+                                  nuts_sampler="pymc")
+        result = estimator.fit(
+            model, pattern_data, channel_pars, time_pars, groups=groups
+        )
+
+        assert result.diagnostics["idata"].posterior.sizes["chain"] == 2
+        assert np.isfinite(result.channel_pars).all()
+        assert np.isfinite(result.time_pars).all()
+
     def test_posterior_event_probabilities(self, fitted_setup):
         """Each draw implies its own by-trial event probabilities."""
         pytest.importorskip("pymc")
