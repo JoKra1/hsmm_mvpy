@@ -351,6 +351,59 @@ class TestParameterTying:
         assert n_distinct == 5
         assert len(first_seen) == n_distinct
 
+    def test_grouped_likelihood_matches_numpy(self, fitted_setup):
+        """The summed per-group Ops must equal the numpy grouped likelihood.
+
+        Each group is scored on its own trials, so each carries its own
+        max_duration, and the pmf is normalised over that. Getting that wrong
+        would still sample, just from the wrong posterior.
+        """
+        pytest.importorskip("pymc")
+        from scipy import stats
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        n_dims = pattern_data.cross_corr.shape[1]
+        channel_map = np.array([[0, 0, 0], [0, 1, 1]])
+        time_map = np.array([[0, 0, 0, 0], [0, 1, 1, 1]])
+        model = EventModel(
+            n_events=n_events, channel_map=channel_map, time_map=time_map,
+            grouping_dict={"condition": ["a", "b"]},
+        )
+        model.n_dims = n_dims
+        groups = np.arange(len(pattern_data.durations)) % 2
+
+        estimator = MCMCEstimator()
+        pymc_model = estimator.build_model(model, pattern_data, groups)
+        channel_index, n_channel, _ = estimator._tie_index(channel_map)
+        time_index, n_time, _ = estimator._tie_index(time_map)
+        shape = float(model.distribution.shape)
+
+        rng = np.random.default_rng(0)
+        for _ in range(3):
+            shared_channel = rng.normal(0, 1.0, (n_channel, n_dims))
+            shared_scale = np.exp(rng.normal(np.log(5.0), 0.3, n_time))
+
+            total = float(pymc_model.compile_logp()(
+                {"channel_pars": shared_channel, "log_scale": np.log(shared_scale)}
+            ))
+            channel_sd = float(np.std(np.asarray(pattern_data.cross_corr)))
+            priors = (
+                stats.norm.logpdf(shared_channel, 0.0, channel_sd).sum()
+                + stats.norm.logpdf(
+                    np.log(shared_scale), np.log(estimator._even_scale), 1.0).sum()
+            )
+
+            scale = shared_scale[time_index]
+            expected = model.log_likelihood(
+                pattern_data,
+                shared_channel[channel_index],
+                np.stack([np.full(scale.shape, shape), scale], axis=-1),
+                groups,
+            )
+            assert abs((total - priors) - expected) / abs(expected) < EXACT
+
     def test_grouped_model_samples(self, fitted_setup):
         pytest.importorskip("pymc")
         pytest.importorskip("numpyro")
@@ -489,16 +542,16 @@ class TestParameterPrecision:
 class TestEMFixedPoint:
     """EM does not stop at a stationary point of the likelihood.
 
-    Eq 10 recovers the scale from the probability-weighted mean interval using
-    ``mean_to_scale``, which inverts the mean of the untruncated continuous
-    gamma. Eq 3 uses a gamma discretised over ``0..max_duration`` and
-    renormalised, whose mean is different once appreciable mass falls past the
-    support. So the scale update is inconsistent with the distribution the
-    likelihood actually uses.
+    At its solution the channel contributions have converged but the scales have
+    not, and stepping along the gradient still improves the likelihood. That
+    matters here because it means the posterior mode and the EM solution should
+    not be expected to coincide, so agreement between them is not a valid check
+    on a sampler.
 
-    These tests record that, because it means the posterior mode and the EM
-    solution should not be expected to coincide. If the update is ever made
-    consistent, they should start failing.
+    Why EM stops there is not established. There is a separate inconsistency
+    recorded below, between the mean ``mean_to_scale`` assumes and the mean of
+    the pmf the likelihood uses, but the size of that gap does not track the
+    residual gradient across stages, so it is not the explanation.
     """
 
     def test_scale_update_assumes_a_mean_the_pmf_does_not_have(self, fitted_setup):
