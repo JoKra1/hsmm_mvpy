@@ -38,7 +38,9 @@ class MCMCEstimator(BaseEstimator):
         None, taken from the scale of the cross-correlated data.
     nuts_sampler : str, optional
         Passed to ``pm.sample``. "numpyro" compiles the whole graph to JAX and
-        is much faster; "pymc" uses the default backend and the gradient Op.
+        is much faster; "pymc" uses the default backend and the gradient Op,
+        about ten times slower per draw and restricted to one chain at a time,
+        because that backend forks and forking after JAX has run deadlocks.
     random_seed : int, optional
         Seed for sampling.
     progressbar : bool, optional
@@ -180,11 +182,18 @@ class MCMCEstimator(BaseEstimator):
 
         initvals = self._initial_values(model, initial_channel_pars, initial_time_pars)
 
+        # The default backend runs chains in separate forked processes, and
+        # forking a process that has already used JAX deadlocks rather than
+        # failing, so chains are run one after another there. The numpyro
+        # sampler stays inside JAX and does not fork.
+        cores = 1 if self.nuts_sampler != "numpyro" else None
+
         with pymc_model:
             idata = pm.sample(
                 draws=self.draws,
                 tune=self.tune,
                 chains=self.chains,
+                cores=cores,
                 target_accept=self.target_accept,
                 nuts_sampler=self.nuts_sampler,
                 initvals=initvals,
