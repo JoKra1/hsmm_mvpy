@@ -9,7 +9,12 @@ from joblib import Parallel, delayed
 
 from hmp.basedata import BaseData
 from hmp.crossvalidation import pseudo_kfold
-from hmp.models.base import BaseModel, fit_likelihoods, max_explored_scale
+from hmp.models.base import (
+    BaseModel,
+    fit_likelihoods,
+    max_explored_scale,
+    select_by_loo,
+)
 from hmp.models.event import EventModel
 from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
@@ -228,6 +233,30 @@ class CumulativeMethod(BaseModel):
         else:
             warn("Failed to find more than two stages, returning None")
             self._fitted = False
+
+    def select(self, threshold: float = 2.0):
+        """Choose among the models kept on the way up, by out-of-sample density.
+
+        The walk stops when the likelihood stops improving by more than a
+        tolerance, which is a judgement about the data the model was fitted to.
+        This asks the same question of data it was not.
+
+        Parameters
+        ----------
+        threshold : float, optional
+            How many standard errors of the difference a larger model has to be
+            better by to be worth keeping. Default is 2.
+
+        Returns
+        -------
+        n_events : int
+            Number of events in the chosen model.
+        comparison : pandas.DataFrame
+            The comparison across the models kept.
+        """
+        self._check_fitted("select a submodel")
+        ladder = {model.n_events: model for model in self.submodels}
+        return select_by_loo(ladder, threshold=threshold)
 
     def transform(self, *args, **kwargs):
         """

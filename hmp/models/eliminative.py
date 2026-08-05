@@ -8,7 +8,7 @@ import pandas as pd
 import xarray as xr
 
 from hmp.basedata import BaseData
-from hmp.models.base import BaseModel
+from hmp.models.base import BaseModel, select_by_loo
 from hmp.models.event import EventModel
 from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
@@ -150,6 +150,30 @@ class EliminativeMethod(BaseModel):
             gc.collect()
             self.submodels[n_events] = event_model
         self._fitted = True
+
+    def select(self, threshold: float = 2.0):
+        """Trim the ladder to the smallest model that predicts as well.
+
+        The ladder is fitted from the largest number of events downwards and
+        every rung is kept, so something has to choose between them. The
+        likelihood cannot: it rises with every event added. This compares the
+        rungs on data each was not fitted to.
+
+        Parameters
+        ----------
+        threshold : float, optional
+            How many standard errors of the difference a larger model has to be
+            better by to be worth keeping. Default is 2.
+
+        Returns
+        -------
+        n_events : int
+            Number of events in the chosen model.
+        comparison : pandas.DataFrame
+            The comparison across the ladder.
+        """
+        self._check_fitted("select a submodel")
+        return select_by_loo(self.submodels, threshold=threshold)
 
     def transform(self,
                   data: PatternData | BaseData | xr.DataArray,

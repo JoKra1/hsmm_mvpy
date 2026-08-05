@@ -62,6 +62,73 @@ def max_explored_scale(event_model, n_events: int) -> float:
     return float(np.sum(time_pars[0, : n_events - 1, 1]))
 
 
+def select_by_loo(submodels: dict, threshold: float = 2.0) -> tuple:
+    """Choose among fitted submodels by out-of-sample density.
+
+    Trimming a set of models on their likelihood alone prefers the largest of
+    them, because adding an event cannot lower the likelihood of the data it
+    was fitted to. Leave-one-out cross validation estimates the density of data
+    the model has not seen, and comes with a standard error on the difference
+    between two models, so a larger model has to earn its place by more than
+    the error on the comparison.
+
+    The smallest model within ``threshold`` standard errors of the best one is
+    returned rather than the best one itself, on the usual reasoning that a
+    difference smaller than its own error is not a reason to carry the extra
+    events.
+
+    Parameters
+    ----------
+    submodels : dict
+        Fitted models keyed by number of events. Each has to carry per-trial
+        log-likelihoods, which means it was fitted by a sampler.
+    threshold : float, optional
+        How many standard errors of the difference a model has to be better by.
+        Default is 2.
+
+    Returns
+    -------
+    selected : int
+        Key of the chosen model.
+    comparison : pandas.DataFrame
+        The full comparison, as ``arviz.compare`` returns it.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two submodels carry per-trial log-likelihoods. EM reports
+        one number for the whole fit, so this rule does not apply to it.
+    """
+    import arviz as az  # noqa: PLC0415
+
+    fits = {}
+    for key, model in submodels.items():
+        result = getattr(model, "estimation_result", None)
+        idata = result.diagnostics.get("idata") if result is not None else None
+        if idata is not None and "log_likelihood" in idata.groups():
+            fits[key] = idata
+    if len(fits) < 2:
+        raise ValueError(
+            "Selection by leave-one-out needs at least two submodels carrying "
+            "per-trial log-likelihoods; only a sampler records them."
+        )
+
+    comparison = az.compare({str(key): idata for key, idata in fits.items()}, ic="loo")
+    keys = {str(key): key for key in fits}
+    best = comparison.index[0]
+    # anything whose gap to the best is smaller than the error on that gap is
+    # not distinguishable from it, so the smallest such model is taken
+    within = [
+        keys[name]
+        for name in comparison.index
+        if comparison.loc[name, "elpd_diff"] <= threshold * max(
+            float(comparison.loc[name, "dse"]), np.finfo(float).tiny
+        )
+        or name == best
+    ]
+    return min(within), comparison
+
+
 class BaseModel(ABC):
     """The model to analyze the cross-correlated data.
 
