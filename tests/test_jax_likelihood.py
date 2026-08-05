@@ -248,6 +248,113 @@ class TestMCMCEstimator:
         )
         assert abs(total - (likelihood + priors)) / abs(likelihood + priors) < EXACT
 
+    def test_log_density_removes_the_backend_sign_convention(self, fitted_setup):
+        """A negated ``lp`` has to come back positive, and a correct one unchanged.
+
+        numpyro records potential energy where the default backend records log
+        density. Every diagnostic computed from it is invariant under negation,
+        so nothing else in the suite can tell whether the correction fired.
+        """
+        pytest.importorskip("pymc")
+        import arviz as az
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, fitted, n_events = fitted_setup
+        model = EventModel(n_events=n_events)
+        model.n_dims = pattern_data.cross_corr.shape[1]
+
+        estimator = MCMCEstimator()
+        pymc_model = estimator.build_model(model, pattern_data)
+
+        channel_pars = np.asarray(fitted.channel_pars[0], dtype=np.float64)
+        log_scale = np.log(np.asarray(fitted.time_pars[0], dtype=np.float64)[:, 1])
+        truth = float(pymc_model.compile_logp()(
+            {"channel_pars": channel_pars, "log_scale": log_scale}
+        ))
+
+        def density(recorded):
+            idata = az.from_dict(
+                posterior={
+                    "channel_pars": channel_pars[None, None, ...],
+                    "log_scale": log_scale[None, None, ...],
+                },
+                sample_stats={"lp": np.array([[recorded]])},
+            )
+            return MCMCEstimator._log_density(idata, pymc_model)[0, 0]
+
+        assert abs(density(truth) - truth) < abs(truth) * EXACT
+        assert abs(density(-truth) - truth) < abs(truth) * EXACT
+
+    def test_likelihood_is_taken_at_the_returned_parameters(self, fitted_setup):
+        """The field has to hold what EM puts there, not a maximum over draws.
+
+        The search strategies compare ``EstimationResult.likelihood`` across
+        models, so it has to be the likelihood at the parameters that come back
+        with it. A maximum over draws belongs to no returned parameter vector
+        and grows as draws are added, which would make more sampling look like
+        a better model.
+        """
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+        from hmp.estimators.pytensor_op import build_op
+
+        pattern_data, _, n_events = fitted_setup
+        model = EventModel(n_events=n_events)
+        estimator = MCMCEstimator(draws=100, tune=100, chains=2, jitter=False,
+                                  random_seed=0, progressbar=False)
+        model.fit(pattern_data, estimator=estimator, verbose=False)
+        result = model.estimation_result
+
+        op = build_op(pattern_data, model)
+        channel = np.asarray(result.channel_pars[0], dtype=np.float64)
+        time_pars = np.asarray(result.time_pars[0], dtype=np.float64)
+        at_estimate = float(op._call_jax(channel, time_pars))
+
+        assert abs(result.likelihood - at_estimate) / abs(at_estimate) < 1e-6
+
+        idata = result.diagnostics["idata"]
+        per_draw = sum(np.asarray(idata.log_likelihood[name].values).sum(axis=-1)
+                       for name in idata.log_likelihood.data_vars)
+        assert result.likelihood != float(np.max(per_draw))
+
+    def test_fixed_parameters_are_refused(self, fitted_setup):
+        """EM holds these at their starting values; sampling cannot, so it says so."""
+        pytest.importorskip("pymc")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        model = EventModel(n_events=n_events, fixed_time_pars=[0])
+        model.n_dims = pattern_data.cross_corr.shape[1]
+
+        with pytest.raises(NotImplementedError, match="fixed_"):
+            MCMCEstimator().build_model(model, pattern_data)
+
+    def test_probabilities_refuse_another_model(self, fitted_setup):
+        """One estimator serves many submodels, so the stored posterior is checked.
+
+        The search strategies reuse a single estimator for every submodel, which
+        leaves the last fit's posterior in place. Pairing it with a different
+        model would silently describe the wrong one.
+        """
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        estimator = MCMCEstimator(draws=50, tune=50, chains=2, jitter=False,
+                                  random_seed=0, progressbar=False)
+        fitted = EventModel(n_events=n_events)
+        fitted.fit(pattern_data, estimator=estimator, verbose=False)
+
+        other = EventModel(n_events=n_events)
+        with pytest.raises(ValueError, match="different model"):
+            estimator.posterior_event_probabilities(other, pattern_data, n_draws=2)
+
     def test_samples_and_reports_diagnostics(self, fitted_setup):
         pytest.importorskip("pymc")
         pytest.importorskip("numpyro")
@@ -677,6 +784,152 @@ class TestEMFixedPoint:
         stepped[:, 1] = time_pars[:, 1] + 1e-2 * grad_time[:, 1]
         after = float(op._call_jax(channel_pars + 1e-2 * grad_channel, stepped))
         assert after > before
+
+
+class TestOpIdentity:
+    """PyTensor merges Ops it considers equal, so equality has to track the data.
+
+    ``__props__`` drives ``__eq__``, ``__hash__`` and graph merging. A key built
+    only from shapes makes two Ops over different trials interchangeable, and the
+    merged graph then scores one group's data twice and drops the other's. That
+    is a wrong posterior rather than an error, so it is pinned here.
+    """
+
+    @staticmethod
+    def _op(seed, n_samples=40, max_duration=20):
+        from hmp.estimators.pytensor_op import HMPTrialLogLikelihood
+
+        rng = np.random.default_rng(seed)
+        half = n_samples // 2
+        return HMPTrialLogLikelihood(
+            cross_corr=rng.normal(size=(n_samples, 5)),
+            trial_starts=np.array([0, half]),
+            durations=np.array([half, half]),
+            locations_samples=np.zeros(3),
+            max_duration=max_duration,
+            shift=0,
+        )
+
+    def test_same_data_is_equal(self):
+        assert self._op(0) == self._op(0)
+        assert hash(self._op(0)) == hash(self._op(0))
+
+    def test_different_data_is_not_equal(self):
+        """Same shapes and durations, different values: must not be interchangeable."""
+        first, second = self._op(0), self._op(1)
+        assert first._key != second._key
+        assert first != second
+        assert hash(first) != hash(second)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("cross_corr", np.random.default_rng(99).normal(size=(40, 5))),
+            ("trial_starts", np.array([1, 21])),
+            ("durations", np.array([19, 20])),
+            ("locations_samples", np.array([0.0, 1.0, 0.0])),
+            ("max_duration", 21),
+            ("shift", 1),
+        ],
+    )
+    def test_every_component_enters_the_key(self, field, value):
+        """Changing any one of them must make the Ops distinguishable.
+
+        The bug was a key built from shapes rather than values. Covering one
+        component is not enough: whichever is left out lets two Ops carrying
+        different data compare equal, and PyTensor then merges them.
+        """
+        from hmp.estimators.pytensor_op import HMPTrialLogLikelihood
+
+        base = self._op(0)
+        fields = {
+            "cross_corr": base.cross_corr, "trial_starts": base.trial_starts,
+            "durations": base.durations,
+            "locations_samples": base.locations_samples,
+            "max_duration": base.max_duration, "shift": base.shift,
+        }
+        fields[field] = value
+        other = HMPTrialLogLikelihood(**fields)
+
+        assert base._key != other._key, f"{field} does not reach the key"
+        assert base != other
+        assert hash(base) != hash(other)
+
+    def test_graph_keeps_both_ops(self):
+        """Two Ops on identical inputs must contribute their own likelihoods."""
+        import pytensor
+        import pytensor.tensor as pt
+
+        first, second = self._op(0), self._op(1)
+        channel_pars = np.random.default_rng(7).normal(size=(2, 5)) * 0.8
+        time_pars = np.column_stack([np.full(3, 2.0), np.full(3, 3.0)])
+
+        alone = [float(np.sum(np.asarray(op._call_jax(channel_pars, time_pars))))
+                 for op in (first, second)]
+        assert abs(alone[0] - alone[1]) > 1e-6, "the two Ops must differ to be a test"
+
+        channel = pt.dmatrix("channel")
+        time = pt.dmatrix("time")
+        combined = pytensor.function(
+            [channel, time],
+            pt.sum(first(channel, time)) + pt.sum(second(channel, time)),
+        )
+        assert abs(float(combined(channel_pars, time_pars)) - sum(alone)) < 1e-6
+
+
+class TestFullyTiedGroups:
+    """Groups sharing every parameter still have to be scored on their own data.
+
+    With a fully tied map both groups receive the same parameter expressions, so
+    the only thing distinguishing their contributions is the Op itself.
+    """
+
+    def test_tied_groups_match_numpy(self, fitted_setup):
+        pytest.importorskip("pymc")
+        from scipy import stats
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        n_dims = pattern_data.cross_corr.shape[1]
+        channel_map = np.zeros((2, n_events), dtype=int)
+        time_map = np.zeros((2, n_events + 1), dtype=int)
+        model = EventModel(
+            n_events=n_events, channel_map=channel_map, time_map=time_map,
+            grouping_dict={"condition": ["a", "b"]},
+        )
+        model.n_dims = n_dims
+        groups = np.arange(len(pattern_data.durations)) % 2
+
+        estimator = MCMCEstimator()
+        pymc_model = estimator.build_model(model, pattern_data, groups)
+        channel_index, n_channel, _ = estimator._tie_index(channel_map)
+        time_index, n_time, _ = estimator._tie_index(time_map)
+        shape = float(model.distribution.shape)
+
+        rng = np.random.default_rng(0)
+        shared_channel = rng.normal(0, 1.0, (n_channel, n_dims))
+        shared_scale = np.exp(rng.normal(np.log(5.0), 0.3, n_time))
+
+        total = float(pymc_model.compile_logp()(
+            {"channel_pars": shared_channel, "log_scale": np.log(shared_scale)}
+        ))
+        channel_sd = float(np.std(np.asarray(pattern_data.cross_corr))) * \
+            MCMCEstimator.CHANNEL_PRIOR_WIDTH
+        priors = (
+            stats.norm.logpdf(shared_channel, 0.0, channel_sd).sum()
+            + stats.norm.logpdf(
+                np.log(shared_scale), np.log(estimator._even_scale), 1.0).sum()
+        )
+
+        scale = shared_scale[time_index]
+        expected = model.log_likelihood(
+            pattern_data,
+            shared_channel[channel_index],
+            np.stack([np.full(scale.shape, shape), scale], axis=-1),
+            groups,
+        )
+        assert abs((total - priors) - expected) / abs(expected) < EXACT
 
 
 if __name__ == "__main__":
