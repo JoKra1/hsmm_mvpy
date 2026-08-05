@@ -35,6 +35,10 @@ class EliminativeMethod(BaseModel):
         `compute_max_events()` if not provided.
     min_events : int, optional
         The minimum number of events to be estimated. Defaults to 1.
+    estimator : BaseEstimator, optional
+        Estimator used for every submodel. Given here rather than to ``fit``
+        because the search fits many submodels. Defaults to expectation
+        maximization.
     base_fit : EventModel, optional
         To start the elimination from a specfic model this argument can
         be provided with a fitted EventModel. Defaults to None.
@@ -55,6 +59,7 @@ class EliminativeMethod(BaseModel):
         min_events: int = 1,
         base_fit: EventModel | None = None,
         tolerance: float = 1e-4,
+        estimator=None,
         max_iteration: int = 1000,
         distribution: Any = None
     ):
@@ -67,6 +72,7 @@ class EliminativeMethod(BaseModel):
         self.base_fit: EventModel | None = base_fit
         self.tolerance: float = tolerance
         self.max_iteration: int = max_iteration
+        self.estimator = estimator
         self.submodels: dict[int, EventModel] = {}
 
     def fit(
@@ -107,7 +113,8 @@ class EliminativeMethod(BaseModel):
                 f"Estimating all solutions for maximal number of events ({max_events})"
             )
             base_fit = self.get_event_model(n_events=max_events, starting_points=1)
-            base_fit.fit(pattern_data, verbose=False, cpus=cpus)
+            base_fit.fit(pattern_data, verbose=False, cpus=cpus,
+                         estimator=self.estimator)
         else:
             base_fit = self.base_fit
         max_events = base_fit.n_events
@@ -136,7 +143,8 @@ class EliminativeMethod(BaseModel):
                             channel_pars=np.array(events_temp),
                             time_pars=np.array(pars_temp),
                             verbose=False,
-                            cpus=cpus
+                            cpus=cpus,
+                            estimator=self.estimator,
                         )
 
             gc.collect()
