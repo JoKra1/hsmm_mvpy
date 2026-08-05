@@ -1,14 +1,10 @@
 """JAX implementation of the HMP likelihood.
 
-This mirrors :meth:`hmp.models.event.EventModel.estim_probs`, in a form that can
-be differentiated and so used with gradient-based samplers. Equation numbers
-refer to Weindel, van Maanen and Borst (2024).
+Mirrors :meth:`hmp.models.event.EventModel.estim_probs` in a differentiable
+form. Equation numbers refer to Weindel, van Maanen and Borst (2024).
 
-Only the likelihood is reproduced here, not the normalised event probabilities
-of Eq 8. The log-likelihood is computed from the unnormalised product of the
-forward and backward variables, so the normalisation, its degenerate
-zero-denominator case, and the final transpose are all downstream of anything a
-sampler needs.
+Only the likelihood is reproduced, not the normalised event probabilities of
+Eq 8, which are downstream of anything a sampler needs.
 
 The reference values in ``tests/gen_data/likelihood_reference.npz`` are what
 this has to reproduce.
@@ -18,8 +14,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats import gamma as jax_gamma
 
-# The numpy implementation is only exactly reproducible in double precision, and
-# gradients are checked by finite differences, which needs it too.
+# double precision: needed to reproduce the numpy implementation exactly
 jax.config.update("jax_enable_x64", True)
 
 
@@ -62,17 +57,14 @@ def stage_pmf(time_pars, locations_samples, max_duration, shift):
     support = jnp.arange(max_duration, dtype=jnp.float64)
 
     def one_stage(pars, location):
-        # The gamma density is evaluated away from zero even where the result is
-        # discarded. jnp.where masks a value but not the gradient flowing through
-        # it, and the density at zero goes through log(0), so differentiating it
-        # would give NaN even though the value is correct.
+        # never evaluate the density at zero: jnp.where masks the value but not
+        # the gradient, and log(0) would give a NaN gradient
         censored = support < shift
         safe_support = jnp.where(censored, 1.0, support)
         pdf = jax_gamma.pdf(safe_support, pars[0], scale=pars[1])
         pdf = jnp.where(censored, 0.0, pdf)
 
-        # Same reasoning for the normalisation: guard the denominator rather than
-        # repairing the quotient afterwards.
+        # likewise guard the denominator rather than repair the quotient
         total = jnp.sum(pdf)
         positive = total > 0
         pdf = jnp.where(positive, pdf / jnp.where(positive, total, 1.0), 0.0)
@@ -145,8 +137,7 @@ def trial_log_likelihood(  # noqa: PLR0913, PLR0917
     pmf = stage_pmf(time_pars, locations_samples, max_duration, shift)
     pmf_b = pmf[:, ::-1]
 
-    # Eq 5 and 6 for the first event, then the recursion. The number of events is
-    # small and known, so this unrolls rather than needing a scan.
+    # Eq 5 and 6, unrolled: the number of events is small and known
     forward = [pmf[:, 0][:, None] * probs[:, :, 0]]
     backward = [jnp.broadcast_to(pmf_b[:, 0][:, None], probs.shape[:2])]
     for event in range(1, n_events):
