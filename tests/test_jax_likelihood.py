@@ -355,6 +355,82 @@ class TestMCMCEstimator:
         with pytest.raises(ValueError, match="different model"):
             estimator.posterior_event_probabilities(other, pattern_data, n_draws=2)
 
+    def test_em_seeding_starts_where_em_finished(self, fitted_setup):
+        """``init_from="em"`` has to run EM and sample from its solution.
+
+        A maximizer gets into a sensible region of this likelihood more
+        reliably than a sampler started anywhere else, so the two are used for
+        what each is good at. The EM likelihood is recorded alongside so the
+        posterior can be compared against the point it was started from.
+        """
+        pytest.importorskip("pymc")
+        pytest.importorskip("numpyro")
+
+        from hmp.estimators.mcmc import MCMCEstimator
+
+        pattern_data, _, n_events = fitted_setup
+        model = EventModel(n_events=n_events)
+        estimator = MCMCEstimator(draws=50, tune=50, chains=2, jitter=False,
+                                  init_from="em", random_seed=0, progressbar=False)
+        model.fit(pattern_data, estimator=estimator, verbose=False)
+        result = model.estimation_result
+
+        seeded_from = result.diagnostics["em_likelihood"]
+        assert seeded_from is not None, "the EM solution it started from is not recorded"
+        assert np.isfinite(seeded_from)
+
+        plain = EventModel(n_events=n_events)
+        plain.fit(pattern_data, estimator=MCMCEstimator(
+            draws=50, tune=50, chains=2, jitter=False, random_seed=0,
+            progressbar=False), verbose=False)
+        assert plain.estimation_result.diagnostics["em_likelihood"] is None
+
+    def test_selection_prefers_the_smaller_model_when_the_gap_is_noise(self):
+        """A larger model has to beat the smaller by more than the error on the gap.
+
+        Two models are compared where one is a copy of the other, so the
+        difference between them is zero and entirely within its own error. The
+        smaller has to win, which is what stops the rule from behaving like the
+        likelihood it replaces.
+        """
+        pytest.importorskip("arviz")
+        import arviz as az
+
+        from hmp.models.base import select_by_loo
+
+        rng = np.random.default_rng(0)
+        draws = rng.normal(size=(2, 60, 25))
+
+        class _Fitted:
+            def __init__(self, idata):
+                self.estimation_result = type(
+                    "R", (), {"diagnostics": {"idata": idata}}
+                )()
+
+        idata = az.from_dict(
+            posterior={"x": draws[..., :1]},
+            log_likelihood={"obs": draws},
+        )
+        same = az.from_dict(
+            posterior={"x": draws[..., :1]},
+            log_likelihood={"obs": draws.copy()},
+        )
+        chosen, comparison = select_by_loo({3: _Fitted(idata), 4: _Fitted(same)})
+
+        assert chosen == 3, f"took the larger model on a zero difference\n{comparison}"
+
+    def test_selection_needs_pointwise_likelihoods(self):
+        """EM reports one number per fit, so the rule has to refuse rather than guess."""
+        pytest.importorskip("arviz")
+
+        from hmp.models.base import select_by_loo
+
+        class _EMFitted:
+            estimation_result = type("R", (), {"diagnostics": {}})()
+
+        with pytest.raises(ValueError, match="per-trial log-likelihoods"):
+            select_by_loo({3: _EMFitted(), 4: _EMFitted()})
+
     def test_samples_and_reports_diagnostics(self, fitted_setup):
         pytest.importorskip("pymc")
         pytest.importorskip("numpyro")
