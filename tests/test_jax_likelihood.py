@@ -652,6 +652,12 @@ class TestMultimodality:
     different log probabilities. r_hat reports the disagreement but not the
     reason, and more draws do not fix this one, so the estimator reports whether
     the chains are separated rather than merely mixing slowly.
+
+    Jitter is asked for here rather than left at its default. Chains that start
+    at the same point tend to reach the same mode, so a fit can look settled
+    while the posterior has several; spreading the starting points is what gives
+    the chains a chance to disagree, which is the whole of what this diagnostic
+    reads.
     """
 
     def test_separated_modes_flagged_when_events_misspecified(self):
@@ -677,7 +683,8 @@ class TestMultimodality:
             channel_pars, time_pars = model._format_parameters(
                 None, None, groups, 1, pattern_data.durations, pattern_data.sfreq
             )
-            estimator = MCMCEstimator(draws=300, tune=300, chains=2, random_seed=0)
+            estimator = MCMCEstimator(draws=300, tune=300, chains=2, jitter=True,
+                                      random_seed=0)
             outcomes[candidate] = estimator.fit(
                 model, pattern_data, channel_pars, time_pars, groups=groups
             )
