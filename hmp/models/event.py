@@ -455,7 +455,7 @@ class EventModel(BaseModel):
             An xarray DataArray with dimensions ("em_iteration", "group") containing
             the log-likelihood traces.
         """
-        self._check_fitted("get traces")
+        self._check_iterative("get traces", "traces_group")
         return xr.DataArray(
             self.traces_group,
             dims=("em_iteration", "group"),
@@ -490,7 +490,7 @@ class EventModel(BaseModel):
             An xarray DataArray with dimensions ("em_iteration", "group", "stage", "time_pars")
             containing the time parameter deviations.
         """
-        self._check_fitted("get dev time pars")
+        self._check_iterative("get dev time pars", "time_pars_dev")
         return xr.DataArray(
             self.time_pars_dev,
             dims=("em_iteration", "group", "stage", "time_pars"),
@@ -625,8 +625,7 @@ class EventModel(BaseModel):
         np.ndarray
             A 2D array where each row contains the shape and scale parameters for a stage.
         """
-        # at least one sample: a zero-length stage has a zero scale, which is not
-        # a usable parameter value whatever the censoring asks for
+        # at least one sample: a zero-length stage has a zero scale
         minimum_duration = max(1, *self._time_to_samples(self.locations, sfreq))
         while True:
             rnd_events = np.random.default_rng().integers(
@@ -636,9 +635,6 @@ class EventModel(BaseModel):
             rnd_durations = np.hstack((rnd_events, self.max_duration)) - np.hstack(
                 (0, rnd_events)
             )  # associated durations
-            # drawing at least once: testing the condition first left the
-            # durations at zero whenever every location is zero, which is the
-            # case for a single event
             if not any(rnd_durations < minimum_duration):
                 break
         random_stages = np.array(
