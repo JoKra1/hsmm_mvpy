@@ -13,6 +13,7 @@ The priors are placeholders and have not been agreed for the method.
 import numpy as np
 
 from hmp.estimators.base import BaseEstimator, EstimationResult
+from hmp.estimators.em import EMEstimator
 from hmp.estimators.pytensor_op import build_trial_op
 
 
@@ -81,6 +82,14 @@ class MCMCEstimator(BaseEstimator):
         None, several times the spread of the cross-correlated data, which is
         wide enough not to shrink the estimates. Still provisional: the priors
         for this method have not been settled.
+    init_from : str, optional
+        Where the chains start. None uses the starting points the model
+        supplies. "em" runs expectation maximization first and starts from its
+        solution, which is the only setting under which the chains reliably
+        find the same region of the parameter space: the likelihood is hard to
+        explore from an arbitrary point, and a maximizer is better at getting
+        into a sensible one than a sampler is. What the sampler then adds is
+        the spread around it, which is what EM cannot give.
     init : str, optional
         Initialisation method for the default backend, as named by
         ``pm.init_nuts``: "adapt_diag", "adapt_full", "advi", "advi+adapt_diag",
@@ -116,6 +125,7 @@ class MCMCEstimator(BaseEstimator):
         channel_prior_sd: float = None,
         nuts_sampler: str = "numpyro",
         jitter: bool = False,
+        init_from: str = None,
         init: str = None,
         random_seed: int = None,
         progressbar: bool = False,
@@ -128,6 +138,7 @@ class MCMCEstimator(BaseEstimator):
         self.channel_prior_sd = channel_prior_sd
         self.nuts_sampler = nuts_sampler
         self.jitter = jitter
+        self.init_from = init_from
         self.init = init
         self.random_seed = random_seed
         self.progressbar = progressbar
@@ -231,7 +242,7 @@ class MCMCEstimator(BaseEstimator):
         initial_channel_pars: np.ndarray,
         initial_time_pars: np.ndarray,
         groups: np.ndarray = None,
-        cpus: int = 1,  # noqa: ARG002
+        cpus: int = 1,
     ) -> EstimationResult:
         """Sample the posterior and summarise it as an EstimationResult.
 
@@ -255,6 +266,15 @@ class MCMCEstimator(BaseEstimator):
             treating the modes separately, does.
         """
         import pymc as pm  # noqa: PLC0415
+
+        em_result = None
+        if self.init_from == "em":
+            em_result = EMEstimator().fit(
+                model, pattern_data, initial_channel_pars, initial_time_pars,
+                groups=groups, cpus=cpus,
+            )
+            initial_channel_pars = np.asarray(em_result.channel_pars)[None, ...]
+            initial_time_pars = np.asarray(em_result.time_pars)[None, ...]
 
         pymc_model = self.build_model(model, pattern_data, groups)
 
@@ -298,7 +318,7 @@ class MCMCEstimator(BaseEstimator):
         self.idata = idata
         self._sampled_model = model
         self.fitted = True
-        return self._summarise(idata, model, pymc_model)
+        return self._summarise(idata, model, pymc_model, em_result)
 
     def posterior_event_probabilities(  # noqa: PLR0913, PLR0917
         self,
@@ -523,7 +543,7 @@ class MCMCEstimator(BaseEstimator):
         except Exception:  # noqa: BLE001 - a good fit must survive this failing
             return None
 
-    def _summarise(self, idata, model, pymc_model=None):
+    def _summarise(self, idata, model, pymc_model=None, em_result=None):
         """Posterior mean as the point estimate, with diagnostics alongside."""
         import arviz as az  # noqa: PLC0415
 
@@ -591,6 +611,8 @@ class MCMCEstimator(BaseEstimator):
                 "chain_lp_spread": level_spread,
                 "chain_lp": chain_levels,
                 "max_log_density": max_log_density,
+                # what the sampler was started from, so the two can be compared
+                "em_likelihood": None if em_result is None else em_result.likelihood,
             },
             uncertainty={
                 "channel_pars_sd": shared_channel_sd[channel_index],
