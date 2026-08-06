@@ -1,11 +1,8 @@
 """Expectation-Maximization estimator for HMP models."""
 
-import itertools
-import multiprocessing as mp
 from warnings import resetwarnings, warn
 
 import numpy as np
-from tqdm.auto import tqdm
 
 from hmp.patterndata import PatternData
 
@@ -82,7 +79,6 @@ class EMEstimator(BaseEstimator):
             per-iteration ``traces``, ``traces_group`` and ``time_pars_dev``,
             plus the likelihood of every starting point under ``lkhs``.
         """
-
         estimates = []
         for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
             estimates.append(self.em(model, pattern_data, c_pars, t_pars, groups, cpus=cpus))
