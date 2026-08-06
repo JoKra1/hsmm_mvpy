@@ -243,7 +243,6 @@ class CumulativeMethod(BaseModel):
                                  tolerance=self.tolerance, distribution=self.distribution)
         if kfold > 1:
             folds = list(pseudo_kfold(pattern_data, kfold))
-            print(f"Estimating all solutions for {n_events} events with {kfold}-fold crossvalidation")
             results = [
                 self.run_fold(n_events, train_td, test_td,
                              channel_pars_props, time_pars_props, cpus)

@@ -149,7 +149,6 @@ class EventModel(BaseModel):
         self.time_map = np.zeros((1, self.n_events + 1)) if time_map is None else time_map
         self.channel_map = np.zeros((1, self.n_events)) if channel_map is None else channel_map
         self._pool = None
-        self.cpus = 1
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -335,7 +334,16 @@ class EventModel(BaseModel):
                 min_iteration=self.min_iteration,
             )
 
-        result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
+        try:
+            if cpus > 1:
+                self._pool = mp.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data,))
+
+            result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
+        finally:
+            if self._pool is not None:
+                self._pool.close()
+                self._pool.join()
+                self._pool = None
 
         self._fitted = True
         self.estimation_result = result
@@ -921,34 +929,22 @@ class EventModel(BaseModel):
         data_groups = np.unique(groups)
         likes_events_group = []
 
-        try:
-            if cpus > 1:
-                # Set up pool so _estim_probs_groups knows whether to parallelize
-                self._pool = mp.Pool(cpus, initializer=_init_worker, initargs=(pattern_data,))
-
-            for cur_group in data_groups:
-                channel_pars_group = channel_pars[
-                    cur_group, self.channel_map[cur_group, :] >= 0, :
-                ]  # select existing magnitudes
-                # select existing params
-                time_pars_group = time_pars[cur_group, self.time_map[cur_group, :] >= 0, :]
-                likes_events_group.append(
-                    self.chunked_estim_probs(
-                        pattern_data,
-                        channel_pars_group,
-                        time_pars_group,
-                        subset_epochs=(groups == cur_group),
-                        cpus=cpus,
-                        pool=self._pool,
-                    )
+        for cur_group in data_groups:
+            channel_pars_group = channel_pars[
+                cur_group, self.channel_map[cur_group, :] >= 0, :
+            ]  # select existing magnitudes
+            # select existing params
+            time_pars_group = time_pars[cur_group, self.time_map[cur_group, :] >= 0, :]
+            likes_events_group.append(
+                self.chunked_estim_probs(
+                    pattern_data,
+                    channel_pars_group,
+                    time_pars_group,
+                    subset_epochs=(groups == cur_group),
+                    cpus=cpus,
+                    pool=self._pool,
                 )
-        finally:
-            # Close pool references
-            if self._pool is not None:
-                self._pool.close()
-                self._pool.join()
-                self._pool = None
-                self._n_chunks = 1
+            )
 
         likelihood = np.array([x[0] for x in likes_events_group])
 
