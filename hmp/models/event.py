@@ -9,22 +9,17 @@ import itertools
 import multiprocessing as mp
 from itertools import product
 from typing import Any
-from warnings import resetwarnings, warn
+from warnings import warn
 
 import numpy as np
 import xarray as xr
 
 from hmp.basedata import BaseData
+from hmp.estimators.base import BaseEstimator
+from hmp.estimators.em import EMEstimator
 from hmp.models.base import BaseModel
 from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
-
-try:
-    __IPYTHON__
-    from tqdm.notebook import tqdm
-except NameError:
-    from tqdm import tqdm
-
 
 
 class EventModel(BaseModel):
@@ -146,7 +141,6 @@ class EventModel(BaseModel):
         self.grouping_dict = grouping_dict
         self.time_map = np.zeros((1, self.n_events + 1)) if time_map is None else time_map
         self.channel_map = np.zeros((1, self.n_events)) if channel_map is None else channel_map
-        self.n_cor = 30
 
     def _set_locations(self, location):
         """Set minimum distance between successive events."""
@@ -253,13 +247,14 @@ class EventModel(BaseModel):
 
         return channel_pars, time_pars
 
-    def fit(
+    def fit(  # noqa: PLR0913, PLR0917
         self,
         data: BaseData | PatternData,
         channel_pars: np.ndarray = None,
         time_pars: np.ndarray = None,
         verbose: bool = True,
-        cpus: int = 1
+        cpus: int = 1,
+        estimator: BaseEstimator = None,
     ):
         """
         Fit HMP for a single n_events model.
@@ -281,10 +276,17 @@ class EventModel(BaseModel):
             If True, displays output useful for debugging. Default is True.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        estimator : BaseEstimator, optional
+            Estimation method used to optimize the parameters. Defaults to
+            :class:`~hmp.estimators.em.EMEstimator` built from the tolerance and
+            iteration limits given to the model.
 
         Returns
         -------
-        None
+        EstimationResult
+            The full result of the estimation, also stored on the model as
+            ``estimation_result``. Fitted parameters remain available through
+            the usual attributes, so callers may ignore this return value.
         """
         pattern_data = self._instantiate_data_pattern(data)
         self.n_dims = pattern_data.cross_corr.shape[1]
@@ -304,52 +306,26 @@ class EventModel(BaseModel):
                 print(f"Estimating {self.n_events} events model")
 
 
-        if cpus > 1:
-            inputs = zip(
-                itertools.repeat(pattern_data),
-                channel_pars,
-                time_pars,
-                itertools.repeat(groups),
-                itertools.repeat(1),
+        if estimator is None:
+            estimator = EMEstimator(
+                tolerance=self.tolerance,
+                max_iteration=self.max_iteration,
+                min_iteration=self.min_iteration,
             )
-            with mp.Pool(processes=cpus) as pool:
-                if self.starting_points > 1:
-                    estimates = list(tqdm(pool.imap(self._EM_star, inputs),
-                                          total=len(channel_pars)))
-                else:
-                    estimates = pool.starmap(self.EM, inputs)
 
-        else:  # avoids problems if called in an already parallel function
-            estimates = []
-            for t_pars, c_pars in zip(time_pars, channel_pars):
-                estimates.append(
-                    self.EM(
-                        pattern_data,
-                        c_pars,
-                        t_pars,
-                        groups,
-                        1,
-                    )
-                )
-            resetwarnings()
-
-        lkhs = np.array([x[0] for x in estimates])
-        if self.starting_points > 1 :
-            max_lkhs = np.argmax(lkhs)
-        else:
-            max_lkhs = 0
-
-        if np.isneginf(lkhs.sum()):
-            warn("Fit failed, inspect provided starting points")
+        result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
 
         self._fitted = True
-        self.lkhs = lkhs[max_lkhs]
-        self.channel_pars =  np.array(estimates[max_lkhs][1])
-        self.time_pars = np.array(estimates[max_lkhs][2])
-        self.traces = np.array(estimates[max_lkhs][3])
-        self.traces_group = np.array(estimates[max_lkhs][4])
-        self.time_pars_dev = np.array(estimates[max_lkhs][5])
+        self.estimation_result = result
+        self.lkhs = result.likelihood
+        self.channel_pars = result.channel_pars
+        self.time_pars = result.time_pars
+        # Iteration traces are specific to iterative estimators; a sampler has none.
+        self.traces = result.diagnostics.get("traces")
+        self.traces_group = result.diagnostics.get("traces_group")
+        self.time_pars_dev = result.diagnostics.get("time_pars_dev")
         self.group = groups
+        return result
 
     def transform(self, data: Any, cpus: int = 1) -> tuple[np.ndarray, xr.DataArray]:
         """
@@ -379,6 +355,94 @@ class EventModel(BaseModel):
         )
 
         return likelihoods, xreventprobs
+
+    def event_probabilities(
+        self,
+        pattern_data: PatternData,
+        channel_pars: np.ndarray,
+        time_pars: np.ndarray,
+        groups: np.ndarray = None,
+        cpus: int = 1,
+    ) -> xr.DataArray:
+        """
+        Event probabilities for an arbitrary set of parameters.
+
+        Unlike :meth:`transform`, this does not require the model to be fitted and does
+        not read the fitted parameters, so it can be evaluated at any point in parameter
+        space. Sampling-based estimators use it to obtain the by-trial event
+        probabilities implied by each posterior draw.
+
+        Parameters
+        ----------
+        pattern_data : PatternData
+            Preprocessed data cross-correlated with the pattern of the model.
+        channel_pars : np.ndarray
+            3D ndarray (n_groups * n_events * n_channels) of channel contributions.
+        time_pars : np.ndarray
+            3D ndarray (n_groups * n_stages * 2) of time distribution parameters.
+        groups : np.ndarray, optional
+            Array indicating the groups for grouping modeling. Default is None, in which
+            case groups are derived from the durations.
+        cpus : int, optional
+            Number of cores to use in multiprocessing functions. Default is 1.
+
+        Returns
+        -------
+        xr.DataArray
+            Probabilities with dimensions ("trial", "sample", "event"). The summed,
+            per-group and per-trial log-likelihoods are attached as the ``likelihood``,
+            ``group_lkh`` and ``trial_lkh`` attributes.
+        """
+        if groups is None:
+            _, groups, _ = self.group_constructor(pattern_data.durations)
+        _, eventprobs = self._estim_probs_groups(
+            pattern_data, channel_pars, time_pars, groups, cpus=cpus
+        )
+        return eventprobs
+
+    def log_likelihood(  # noqa: PLR0913, PLR0917
+        self,
+        pattern_data: PatternData,
+        channel_pars: np.ndarray,
+        time_pars: np.ndarray,
+        groups: np.ndarray = None,
+        cpus: int = 1,
+        per_trial: bool = False,
+    ) -> float | np.ndarray:
+        """
+        Log-likelihood of the data under the given parameters.
+
+        This is the model's contract with an estimator: everything an estimation method
+        needs in order to score a set of parameters, without reaching into the model's
+        internals.
+
+        Parameters
+        ----------
+        pattern_data : PatternData
+            Preprocessed data cross-correlated with the pattern of the model.
+        channel_pars : np.ndarray
+            3D ndarray (n_groups * n_events * n_channels) of channel contributions.
+        time_pars : np.ndarray
+            3D ndarray (n_groups * n_stages * 2) of time distribution parameters.
+        groups : np.ndarray, optional
+            Array indicating the groups for grouping modeling. Default is None, in which
+            case groups are derived from the durations.
+        cpus : int, optional
+            Number of cores to use in multiprocessing functions. Default is 1.
+        per_trial : bool, optional
+            If True, return the log-likelihood of each trial rather than their sum.
+            Pointwise values are required for model comparison such as LOO or WAIC,
+            which is how sampling-based fits compare numbers of events.
+
+        Returns
+        -------
+        float or np.ndarray
+            Summed log-likelihood, or a 1D array of length n_trials if ``per_trial``.
+        """
+        eventprobs = self.event_probabilities(
+            pattern_data, channel_pars, time_pars, groups, cpus=cpus
+        )
+        return eventprobs.trial_lkh if per_trial else eventprobs.likelihood
 
     @property
     def xrtraces(self):
@@ -484,159 +548,6 @@ class EventModel(BaseModel):
                 "channel": range(self.n_dims),
             },
         )
-
-    def _EM_star(self, args):  # for tqdm usage  #noqa
-        return self.EM(*args)
-
-    def EM(  # noqa
-        self,
-        pattern_data: PatternData,
-        initial_channel_pars: np.ndarray,
-        initial_time_pars: np.ndarray,
-        groups: np.ndarray = None,
-        cpus: int = 1,
-    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Fit using expectation maximization.
-
-        Parameters
-        ----------
-        pattern_data : PatternData
-            Preprocessed data cross-correlated with the pattern of the model
-        initial_channel_pars : np.ndarray
-            2D ndarray (n_events * n_channels) or 3D (iteration * n_events * n_channels),
-            initial conditions for event channel contributions.
-        initial_time_pars : np.ndarray
-            2D ndarray (n_stages * n_parameters) or 3D (iteration * n_stages * n_parameters),
-            initial conditions for time distribution parameters.
-        groups : np.ndarray, optional
-            Array indicating the groups for grouping modeling. Default is None.
-        cpus : int, optional
-            Number of cores to use in multiprocessing functions. Default is 1.
-
-        Returns
-        -------
-        lkh : float
-            Summed log probabilities.
-        channel_pars : np.ndarray
-            Estimated channel contributions for each event.
-        time_pars : np.ndarray
-            Estimated time distribution parameters for each stage.
-        traces : np.ndarray
-            Log-likelihood values for each EM iteration.
-        time_pars_dev : np.ndarray
-            Time parameters for each iteration of the EM algorithm.
-        """
-        lkh, eventprobs = self._estim_probs_groups(
-            pattern_data,
-            initial_channel_pars, initial_time_pars,
-            groups, cpus=cpus
-        )
-        data_groups = np.unique(groups)
-        channel_pars = initial_channel_pars.copy()
-        time_pars = initial_time_pars.copy()
-        traces = [lkh]
-        traces_group = [eventprobs.group_lkh]
-        time_pars_dev = [time_pars.copy()]
-        i = 0
-
-        lkh_prev = lkh.copy()
-        while i < self.max_iteration:  # Expectation-Maximization algorithm
-            if i >= self.min_iteration and (
-                np.isneginf(lkh) or self.tolerance > (lkh - lkh_prev) / np.abs(lkh_prev)):
-                break
-
-            # As long as new run gives better likelihood, go on
-            lkh_prev = lkh.copy()
-
-            # Storage for step-length control
-            new_channel_pars = channel_pars.copy()
-            new_time_pars = time_pars.copy()
-
-            for cur_group in data_groups:  # get params/c_pars
-                channel_map_group = np.where(self.channel_map[cur_group, :] >= 0)[0]
-                time_map_group = np.where(self.time_map[cur_group, :] >= 0)[0]
-                epochs_group = np.where(groups == cur_group)[0]
-
-                # get c_pars/t_pars by group
-                c_par, t_par = self.get_channel_time_parameters_expectation(pattern_data,
-                        eventprobs.values[:, :np.max(pattern_data.durations.values[epochs_group]),
-                                        channel_map_group],
-                                        subset_epochs=epochs_group)
-                new_channel_pars[cur_group, channel_map_group, :] = c_par
-                new_time_pars[cur_group, time_map_group, :] = t_par
-
-                new_channel_pars[cur_group, self.fixed_channel_pars, :] = \
-                    initial_channel_pars[cur_group, self.fixed_channel_pars, :].copy()
-                new_time_pars[cur_group, self.fixed_time_pars, :] = \
-                    initial_time_pars[cur_group, self.fixed_time_pars, :].copy()
-
-            # set c_pars to mean if requested in map
-            for m in range(self.n_events):
-                for m_set in np.unique(self.channel_map[:, m]):
-                    if m_set >= 0:
-                        new_channel_pars[self.channel_map[:, m] == m_set, m, :] = np.mean(
-                            new_channel_pars[self.channel_map[:, m] == m_set, m, :], axis=0
-                        )
-
-            # set param to mean if requested in map
-            for p in range(self.n_events + 1):
-                for p_set in np.unique(self.time_map[:, p]):
-                    if p_set >= 0:
-                        new_time_pars[self.time_map[:, p] == p_set, p, :] = np.mean(
-                            new_time_pars[self.time_map[:, p] == p_set, p, :], axis=0
-                        )
-
-            # Step length control to ensure parameter updates result in valid llk
-            for icor in range(self.n_cor + 1):
-                if icor == self.n_cor:  # just reset
-                    warn(
-                        (
-                            "M step failed, after step halvings. "
-                            "Falling back to previous parameter estimates."
-                        ),
-                        RuntimeWarning,
-                    )
-                    new_channel_pars = channel_pars
-                    new_time_pars = time_pars
-
-                # Compute llk under new parameters
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    lkh, eventprobs = self._estim_probs_groups(
-                        pattern_data,
-                        new_channel_pars, new_time_pars,
-                        groups, cpus=cpus
-                    )
-
-                # Stop if no update
-                if np.isclose((new_time_pars - time_pars).sum(), 0):
-                    break
-
-                # Half step in case the llk is ill-defined
-                if np.isneginf(lkh):
-                    new_channel_pars = (new_channel_pars + channel_pars)/2
-                    new_time_pars = (new_time_pars + time_pars)/2
-                else:
-                    # Accept step
-                    break
-
-            # Accept new parameters
-            time_pars = new_time_pars
-            channel_pars = new_channel_pars
-
-            traces.append(lkh)
-            traces_group.append(eventprobs.group_lkh)
-            time_pars_dev.append(time_pars.copy())
-            i += 1
-
-        if i == self.max_iteration:
-            warn(
-                f"Convergence failed, estimation hit the maximum number of iterations: "
-                f"({int(self.max_iteration)})",
-                RuntimeWarning,
-            )
-        return lkh, channel_pars, time_pars, np.array(traces), \
-            np.array(traces_group), np.array(time_pars_dev)
 
     def get_channel_time_parameters_expectation(
         self,
@@ -782,6 +693,9 @@ class EventModel(BaseModel):
         eventprobs : np.ndarray
             A 3D array of shape (n_trials, max_samples, n_events) containing the probabilities
             for each event.
+        trial_loglikelihood : np.ndarray
+            A 1D array of length n_trials with the log probability of each trial, before
+            summing. Needed for pointwise model comparison such as LOO/WAIC.
         """
         n_events = channel_pars.shape[0]
         n_stages = n_events + 1
@@ -866,13 +780,14 @@ class EventModel(BaseModel):
             backward[: durations[trial], trial, :] = backward[: durations[trial], trial, :][::-1]
         eventprobs = forward * backward
         eventprobs = np.clip(eventprobs, 0, None)  # floating point precision error
-        likelihood = np.sum(
-            np.log(eventprobs[:, :, 0].sum(axis=0))
+        trial_likelihood = np.log(
+            eventprobs[:, :, 0].sum(axis=0)
         )  # sum over max_samples to avoid 0s in log
+        likelihood = np.sum(trial_likelihood)
         eventprobs = eventprobs / eventprobs.sum(axis=0)
         eventprobs[np.isnan(eventprobs)] = 0
         eventprobs = eventprobs.transpose((1,0,2))
-        return [likelihood, eventprobs]
+        return [likelihood, eventprobs, trial_likelihood]
 
     def _estim_probs_groups(
         self,
@@ -944,6 +859,11 @@ class EventModel(BaseModel):
 
         likelihood = np.array([x[0] for x in likes_events_group])
 
+        # Per-trial log-likelihood, scattered back into the original trial order
+        trial_likelihood = np.zeros(len(pattern_data.durations))
+        for cur_group in data_groups:
+            trial_likelihood[groups == cur_group] = likes_events_group[cur_group][2]
+
         # all_xreventprobs must have same order as pattern_data because
         # subset_epochs is used later on eventprobs!
         all_xreventprobs = xr.DataArray(np.zeros((len(pattern_data.durations), \
@@ -964,6 +884,7 @@ class EventModel(BaseModel):
         all_xreventprobs.attrs['event_width'] = len(pattern_data.template)
         all_xreventprobs.attrs['likelihood'] = np.sum(np.array(likelihood))
         all_xreventprobs.attrs['group_lkh'] = np.array(likelihood)
+        all_xreventprobs.attrs['trial_lkh'] = trial_likelihood
         all_xreventprobs.attrs['group_labels'] = self.group_labels
 
         return [likelihood.sum(), all_xreventprobs]

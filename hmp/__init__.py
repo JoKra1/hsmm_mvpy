@@ -6,6 +6,7 @@ from . import (
     basedata,
     crossvalidation,
     distributions,
+    estimators,
     io,
     models,
     patterndata,
@@ -22,4 +23,5 @@ except PackageNotFoundError:
 
 
 __all__ = ["models", "simulations", "utils", "visu", "io", "patterns", "projectors",
-           "patterndata", "basedata", "distributions" ,"crossvalidation", "__version__"]
+           "patterndata", "basedata", "distributions" ,"crossvalidation", "estimators",
+           "__version__"]
