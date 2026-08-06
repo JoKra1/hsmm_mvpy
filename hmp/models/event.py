@@ -4,7 +4,6 @@ The ``EventModel`` class is the base model for estimating
 hidden multivariate pattern models.
 """
 
-import itertools
 import multiprocessing as mp
 from itertools import product
 from typing import Any
@@ -19,7 +18,6 @@ from hmp.estimators.em import EMEstimator
 from hmp.models.base import BaseModel
 from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
-
 
 _WORKER_DATA = {}
 
@@ -176,7 +174,7 @@ class EventModel(BaseModel):
         if self.n_events > 1 and any(self.locations[1:-1] < np.round(self.pattern.width)):
             warn(
                 "For n_event > 1, locations must be greater or equal than pattern.width"
-                f" but received locations ({self.locations}) is smaller than  ({self.pattern.width})."
+            f" but received locations ({self.locations}) is smaller than ({self.pattern.width})."
             )
 
     def _format_parameters(  # noqa: PLR0912, PLR0915
@@ -826,9 +824,11 @@ class EventModel(BaseModel):
         pattern_data, channel_pars, time_pars, subset_epochs :
             Passed through to estim_probs.
         cpus : int
-            Number of trial-chunks to split into. cpus=1 reproduces the single call exactly (one chunk == the whole subset).
+            Number of trial-chunks to split into. cpus=1 reproduces the single call exactly
+            (one chunk == the whole subset).
         pool : multiprocessing.Pool or None
-            If given and cpus > 1, chunks run via pool.starmap. If None, chunks run serially in-process
+            If given and cpus > 1, chunks run via pool.starmap. If None, chunks run serially
+            in-process
         """
         # estim_probs accepts a boolean mask of full length; normalize to indices
         # here so chunk slicing and reassembly both work on positional indices.
