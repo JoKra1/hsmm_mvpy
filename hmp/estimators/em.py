@@ -6,6 +6,7 @@ from warnings import resetwarnings, warn
 import numpy as np
 
 from hmp.patterndata import PatternData
+from hmp.utils import _best_context
 
 from .base import BaseEstimator, EstimationResult
 
@@ -94,7 +95,8 @@ class EMEstimator(BaseEstimator):
         pool = None
         try:
             if cpus > 1:
-                pool = mp.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data,))
+                ctx = _best_context()
+                pool = ctx.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data,))
             estimates = []
             for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
                 estimates.append(self.em(
