@@ -836,7 +836,7 @@ class EventModel(BaseModel):
         if pool is not None:
             results = pool.starmap(
                 worker_estim_probs,
-                [(self, channel_pars, time_pars, c) for c in chunks],
+                [(channel_pars, time_pars, c) for c in chunks],
             )
         else:
             results = [

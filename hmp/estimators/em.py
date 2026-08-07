@@ -12,13 +12,14 @@ from .base import BaseEstimator, EstimationResult
 
 _WORKER_DATA = {}
 
-def _init_worker(pattern_data: PatternData):
+def _init_worker(pattern_data: PatternData, model):
     _WORKER_DATA["pattern_data"] = pattern_data
+    _WORKER_DATA["model"] = model
 
 
-def worker_estim_probs(model, channel_pars, time_pars, chunk):
+def worker_estim_probs(channel_pars, time_pars, chunk):
     """Worker function to estimate probabilities of a chunk of trials."""
-    return model.estim_probs(
+    return _WORKER_DATA["model"].estim_probs(
         _WORKER_DATA["pattern_data"], channel_pars, time_pars, subset_epochs=chunk
     )
 
@@ -96,7 +97,7 @@ class EMEstimator(BaseEstimator):
         try:
             if cpus > 1:
                 ctx = _get_mp_context()
-                pool = ctx.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data,))
+                pool = ctx.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data, model))
             estimates = []
             for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
                 estimates.append(self.em(
