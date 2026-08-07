@@ -432,7 +432,7 @@ def _define_random_state(seed=None):
         random_state = RandomState(np.random.randint(low=0, high=3000))
     return random_state
 
-def _best_context():
+def _get_mp_context():
     available_methods = mp.get_all_start_methods()
     for method in ["fork", "forkserver", "spawn"]:
         if method in available_methods:

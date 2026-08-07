@@ -3,7 +3,6 @@
 This module provides functions for reading MNE epoched data format (.fif only)
 """
 
-import multiprocessing as mp
 from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Optional
@@ -15,6 +14,7 @@ from numpy.typing import DTypeLike
 from xarray import Dataset
 
 from hmp.io import preprocessing, utils
+from hmp.utils import _get_mp_context
 
 
 def read_mne_epochs(
@@ -100,7 +100,8 @@ def read_mne_epochs(
             for recording in recordings
         ]
     else:
-        with mp.Pool(processes=cpus) as pool:
+        ctx = _get_mp_context()
+        with ctx.Pool(processes=cpus) as pool:
             epochs_list = pool.starmap(
                 _process_epoch_dataset,
                 [(recording, montage, verbose,
