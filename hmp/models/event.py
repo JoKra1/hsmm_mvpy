@@ -14,22 +14,10 @@ import xarray as xr
 
 from hmp.basedata import BaseData
 from hmp.estimators.base import BaseEstimator
-from hmp.estimators.em import EMEstimator
+from hmp.estimators.em import EMEstimator, worker_estim_probs
 from hmp.models.base import BaseModel
 from hmp.patterndata import PatternData
 from hmp.patterns import Pattern
-
-_WORKER_DATA = {}
-
-
-def _init_worker(pattern_data: PatternData):
-    _WORKER_DATA["pattern_data"] = pattern_data
-
-
-def _worker_estim_probs(model, channel_pars, time_pars, chunk):
-    return model.estim_probs(
-        _WORKER_DATA["pattern_data"], channel_pars, time_pars, subset_epochs=chunk
-    )
 
 
 class EventModel(BaseModel):
@@ -148,14 +136,6 @@ class EventModel(BaseModel):
         self.grouping_dict = grouping_dict
         self.time_map = np.zeros((1, self.n_events + 1)) if time_map is None else time_map
         self.channel_map = np.zeros((1, self.n_events)) if channel_map is None else channel_map
-        self._pool = None
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        # Do not pickle the pool (it is unpicklable)
-        if "_pool" in state:
-            del state["_pool"]
-        return state
 
     def _set_locations(self, location):
         """Set minimum distance between successive events."""
@@ -275,6 +255,7 @@ class EventModel(BaseModel):
         verbose: bool = True,
         cpus: int = 1,
         estimator: BaseEstimator = None,
+        pool: mp.Pool = None,
     ):
         """
         Fit HMP for a single n_events model.
@@ -334,16 +315,7 @@ class EventModel(BaseModel):
                 min_iteration=self.min_iteration,
             )
 
-        try:
-            if cpus > 1:
-                self._pool = mp.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data,))
-
-            result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
-        finally:
-            if self._pool is not None:
-                self._pool.close()
-                self._pool.join()
-                self._pool = None
+        result = estimator.fit(self, pattern_data, channel_pars, time_pars, groups, cpus)
 
         self._fitted = True
         self.estimation_result = result
@@ -392,6 +364,7 @@ class EventModel(BaseModel):
         time_pars: np.ndarray,
         groups: np.ndarray = None,
         cpus: int = 1,
+        pool: mp.Pool = None,
     ) -> xr.DataArray:
         """
         Event probabilities for an arbitrary set of parameters.
@@ -414,6 +387,8 @@ class EventModel(BaseModel):
             case groups are derived from the durations.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        pool : mp.Pool, optional
+            Multiprocessing pool to use for parallelization. Default is None.
 
         Returns
         -------
@@ -425,7 +400,7 @@ class EventModel(BaseModel):
         if groups is None:
             _, groups, _ = self.group_constructor(pattern_data.durations)
         _, eventprobs = self._estim_probs_groups(
-            pattern_data, channel_pars, time_pars, groups, cpus=cpus
+            pattern_data, channel_pars, time_pars, groups, cpus=cpus, pool=pool
         )
         return eventprobs
 
@@ -860,7 +835,7 @@ class EventModel(BaseModel):
         # run estim_probs per chunk
         if pool is not None:
             results = pool.starmap(
-                _worker_estim_probs,
+                worker_estim_probs,
                 [(self, channel_pars, time_pars, c) for c in chunks],
             )
         else:
@@ -896,6 +871,7 @@ class EventModel(BaseModel):
         time_pars: np.ndarray,
         groups: np.ndarray,
         cpus: int = 1,
+        pool: mp.Pool = None,
     ) -> tuple[np.ndarray, xr.DataArray]:
         """
         Estimate probability groups for grouping models.
@@ -917,6 +893,8 @@ class EventModel(BaseModel):
             An array indicating the groups for grouping modeling.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        pool : mp.Pool, optional
+            Multiprocessing pool to use for parallelization. Default is None.
 
         Returns
         -------
@@ -942,7 +920,7 @@ class EventModel(BaseModel):
                     time_pars_group,
                     subset_epochs=(groups == cur_group),
                     cpus=cpus,
-                    pool=self._pool,
+                    pool=pool,
                 )
             )
 

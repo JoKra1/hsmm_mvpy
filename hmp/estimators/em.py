@@ -1,5 +1,6 @@
 """Expectation-Maximization estimator for HMP models."""
 
+import multiprocessing as mp
 from warnings import resetwarnings, warn
 
 import numpy as np
@@ -8,6 +9,17 @@ from hmp.patterndata import PatternData
 
 from .base import BaseEstimator, EstimationResult
 
+_WORKER_DATA = {}
+
+def _init_worker(pattern_data: PatternData):
+    _WORKER_DATA["pattern_data"] = pattern_data
+
+
+def worker_estim_probs(model, channel_pars, time_pars, chunk):
+    """Worker function to estimate probabilities of a chunk of trials."""
+    return model.estim_probs(
+        _WORKER_DATA["pattern_data"], channel_pars, time_pars, subset_epochs=chunk
+    )
 
 class EMEstimator(BaseEstimator):
     """Expectation-Maximization parameter estimator.
@@ -79,9 +91,28 @@ class EMEstimator(BaseEstimator):
             per-iteration ``traces``, ``traces_group`` and ``time_pars_dev``,
             plus the likelihood of every starting point under ``lkhs``.
         """
-        estimates = []
-        for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
-            estimates.append(self.em(model, pattern_data, c_pars, t_pars, groups, cpus=cpus))
+        pool = None
+        try:
+            if cpus > 1:
+                pool = mp.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data,))
+            estimates = []
+            for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
+                estimates.append(self.em(
+                    model,
+                    pattern_data,
+                    c_pars,
+                    t_pars,
+                    groups,
+                    cpus=cpus,
+                    pool=pool,
+                    )
+                )
+
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
+
         resetwarnings()
 
         lkhs = np.array([x[0] for x in estimates])
@@ -119,6 +150,7 @@ class EMEstimator(BaseEstimator):
         initial_time_pars: np.ndarray,
         groups: np.ndarray = None,
         cpus: int = 1,
+        pool: mp.Pool = None,
     ) -> tuple:
         """Run expectation-maximization from a single starting point.
 
@@ -139,6 +171,8 @@ class EMEstimator(BaseEstimator):
             Array indicating the groups for grouping modeling. Default is None.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        pool : mp.Pool, optional
+            Multiprocessing pool to use for parallelization. Default is None.
 
         Returns
         -------
@@ -149,7 +183,7 @@ class EMEstimator(BaseEstimator):
         eventprobs = model.event_probabilities(
             pattern_data,
             initial_channel_pars, initial_time_pars,
-            groups, cpus=cpus
+            groups, cpus=cpus, pool=pool,
         )
         lkh = eventprobs.likelihood
         data_groups = np.unique(groups)
@@ -225,7 +259,7 @@ class EMEstimator(BaseEstimator):
                     eventprobs = model.event_probabilities(
                         pattern_data,
                         new_channel_pars, new_time_pars,
-                        groups, cpus=cpus
+                        groups, cpus=cpus, pool=pool
                     )
                     lkh = eventprobs.likelihood
 
