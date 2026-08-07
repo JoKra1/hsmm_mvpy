@@ -39,11 +39,10 @@ class PCA(Projector):
             data: DataArray):
         """Estimate PCA weights."""
         #Compute covariance
-        recordings = set(data.recording.values)
-        group_cov = np.zeros((len(recordings), data.sizes["channel"],
+        groups = data.groupby("recording")
+        group_cov = np.zeros((len(groups), data.sizes["channel"],
                               data.sizes["channel"]), dtype=np.float64)
-        for j, recording in enumerate(recordings):
-            part_data = data.where(data.recording == recording, drop=True)
+        for j, (_, part_data) in enumerate(groups):
             group_cov[j] = self._compute_covariance(part_data)
         vcov_mat = np.mean(group_cov, axis=0)
 
