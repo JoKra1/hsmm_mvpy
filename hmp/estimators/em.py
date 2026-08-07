@@ -142,9 +142,6 @@ class EMEstimator(BaseEstimator):
             },
         )
 
-    def _em_star(self, args):  # for tqdm usage  #noqa
-        return self.em(*args)
-
     def em(  # noqa: PLR0912, PLR0915
         self,
         model,
