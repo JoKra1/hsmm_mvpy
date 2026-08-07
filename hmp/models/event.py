@@ -817,7 +817,7 @@ class EventModel(BaseModel):
         # here so chunk slicing and reassembly both work on positional indices.
         if subset_epochs is None:
             subset_epochs = np.arange(len(pattern_data.starts))
-        if cpus <= 1:
+        if cpus <= 1 or pool is None:
             return self.estim_probs(
                 pattern_data, channel_pars, time_pars, subset_epochs=subset_epochs
             )
