@@ -667,6 +667,7 @@ class EventModel(BaseModel):
         channel_pars: np.ndarray,
         time_pars: np.ndarray,
         subset_epochs: list[int] | None = None,
+        max_duration: int | None = None,
     ) -> tuple[float, np.ndarray, np.ndarray]:
         """
         Estimate probabilities for events and compute the log-likelihood.
@@ -709,7 +710,8 @@ class EventModel(BaseModel):
         durations = ends - starts + 1
         cross_corr = np.vstack([pattern_data.cross_corr[s : e + 1] for s, e in zip(starts, ends)])
         dtype = pattern_data.cross_corr.dtype
-        max_duration = np.max(durations)
+        if max_duration is None:
+            max_duration = np.max(durations)
         gains = np.zeros((cross_corr.shape[0], n_events), dtype=dtype)
         for i in range(cross_corr.shape[1]):
             # computes the gains, i.e. congruence between the pattern shape
@@ -828,6 +830,7 @@ class EventModel(BaseModel):
 
         n_trials = len(subset_epochs)
         n_events = channel_pars.shape[0]
+        full_max_dur = int(np.max(pattern_data.durations.values[subset_epochs]))
 
         # split trials into disjoint chunks
         chunks = [c for c in np.array_split(subset_epochs, cpus) if len(c) > 0]
@@ -836,11 +839,17 @@ class EventModel(BaseModel):
         if pool is not None:
             results = pool.starmap(
                 worker_estim_probs,
-                [(channel_pars, time_pars, c) for c in chunks],
+                [(channel_pars, time_pars, c, full_max_dur) for c in chunks],
             )
         else:
             results = [
-                self.estim_probs(pattern_data, channel_pars, time_pars, subset_epochs=chunk)
+                self.estim_probs(
+                    pattern_data,
+                    channel_pars,
+                    time_pars,
+                    subset_epochs=chunk,
+                    max_duration=full_max_dur,
+                )
                 for chunk in chunks
             ]
 
@@ -848,9 +857,7 @@ class EventModel(BaseModel):
         # likelihood: sum over trials, so chunk log-likelihoods add exactly.
         likelihood = float(np.sum([r[0] for r in results]))
 
-        # eventprobs: each chunk is (chunk_trials, chunk_max_dur, n_events)
-        # max duration over the WHOLE subset, padding shorter chunks with zeros on the sample axis
-        full_max_dur = int(np.max(pattern_data.durations.values[subset_epochs]))
+        # eventprobs: each chunk is (chunk_trials, full_max_dur, n_events)
         eventprobs = np.zeros((n_trials, full_max_dur, n_events), dtype=results[0][1].dtype)
         trial_likelihood = np.empty(n_trials, dtype=results[0][2].dtype)
 

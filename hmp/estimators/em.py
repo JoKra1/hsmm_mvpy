@@ -17,10 +17,14 @@ def _init_worker(pattern_data: PatternData, model):
     _WORKER_DATA["model"] = model
 
 
-def worker_estim_probs(channel_pars, time_pars, chunk):
+def worker_estim_probs(channel_pars, time_pars, chunk, max_duration):
     """Worker function to estimate probabilities of a chunk of trials."""
     return _WORKER_DATA["model"].estim_probs(
-        _WORKER_DATA["pattern_data"], channel_pars, time_pars, subset_epochs=chunk
+        _WORKER_DATA["pattern_data"],
+        channel_pars,
+        time_pars,
+        subset_epochs=chunk,
+        max_duration=max_duration,
     )
 
 class EMEstimator(BaseEstimator):
