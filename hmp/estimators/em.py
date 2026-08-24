@@ -1,16 +1,31 @@
 """Expectation-Maximization estimator for HMP models."""
 
-import itertools
 import multiprocessing as mp
 from warnings import resetwarnings, warn
 
 import numpy as np
-from tqdm.auto import tqdm
 
 from hmp.patterndata import PatternData
+from hmp.utils import _get_mp_context
 
 from .base import BaseEstimator, EstimationResult
 
+_WORKER_DATA = {}
+
+def _init_worker(pattern_data: PatternData, model):
+    _WORKER_DATA["pattern_data"] = pattern_data
+    _WORKER_DATA["model"] = model
+
+
+def worker_estim_probs(channel_pars, time_pars, chunk, max_duration):
+    """Worker function to estimate probabilities of a chunk of trials."""
+    return _WORKER_DATA["model"].estim_probs(
+        _WORKER_DATA["pattern_data"],
+        channel_pars,
+        time_pars,
+        subset_epochs=chunk,
+        max_duration=max_duration,
+    )
 
 class EMEstimator(BaseEstimator):
     """Expectation-Maximization parameter estimator.
@@ -82,25 +97,30 @@ class EMEstimator(BaseEstimator):
             per-iteration ``traces``, ``traces_group`` and ``time_pars_dev``,
             plus the likelihood of every starting point under ``lkhs``.
         """
-        starting_points = len(initial_channel_pars)
-
-        if cpus > 1 and starting_points > 1:
-            inputs = zip(
-                itertools.repeat(model),
-                itertools.repeat(pattern_data),
-                initial_channel_pars,
-                initial_time_pars,
-                itertools.repeat(groups),
-                itertools.repeat(1),
-            )
-            with mp.Pool(processes=min(cpus, starting_points)) as pool:
-                estimates = list(tqdm(pool.imap(self._em_star, inputs),
-                                      total=starting_points))
-        else:  # nothing to spread, or already inside a parallel function
+        pool = None
+        try:
+            if cpus > 1:
+                ctx = _get_mp_context()
+                pool = ctx.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data, model))
             estimates = []
             for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
-                estimates.append(self.em(model, pattern_data, c_pars, t_pars, groups, 1))
-            resetwarnings()
+                estimates.append(self.em(
+                    model,
+                    pattern_data,
+                    c_pars,
+                    t_pars,
+                    groups,
+                    cpus=cpus,
+                    pool=pool,
+                    )
+                )
+
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
+
+        resetwarnings()
 
         lkhs = np.array([x[0] for x in estimates])
         best = int(np.argmax(lkhs))
@@ -126,9 +146,6 @@ class EMEstimator(BaseEstimator):
             },
         )
 
-    def _em_star(self, args):  # for tqdm usage  #noqa
-        return self.em(*args)
-
     def em(  # noqa: PLR0912, PLR0915
         self,
         model,
@@ -137,6 +154,7 @@ class EMEstimator(BaseEstimator):
         initial_time_pars: np.ndarray,
         groups: np.ndarray = None,
         cpus: int = 1,
+        pool: mp.Pool = None,
     ) -> tuple:
         """Run expectation-maximization from a single starting point.
 
@@ -157,6 +175,8 @@ class EMEstimator(BaseEstimator):
             Array indicating the groups for grouping modeling. Default is None.
         cpus : int, optional
             Number of cores to use in multiprocessing functions. Default is 1.
+        pool : mp.Pool, optional
+            Multiprocessing pool to use for parallelization. Default is None.
 
         Returns
         -------
@@ -167,7 +187,7 @@ class EMEstimator(BaseEstimator):
         eventprobs = model.event_probabilities(
             pattern_data,
             initial_channel_pars, initial_time_pars,
-            groups, cpus=cpus
+            groups, cpus=cpus, pool=pool,
         )
         lkh = eventprobs.likelihood
         data_groups = np.unique(groups)
@@ -243,7 +263,7 @@ class EMEstimator(BaseEstimator):
                     eventprobs = model.event_probabilities(
                         pattern_data,
                         new_channel_pars, new_time_pars,
-                        groups, cpus=cpus
+                        groups, cpus=cpus, pool=pool
                     )
                     lkh = eventprobs.likelihood
 
