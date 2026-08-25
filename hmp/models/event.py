@@ -255,7 +255,6 @@ class EventModel(BaseModel):
         verbose: bool = True,
         cpus: int = 1,
         estimator: BaseEstimator = None,
-        pool: mp.Pool = None,
     ):
         """
         Fit HMP for a single n_events model.

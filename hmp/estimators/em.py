@@ -101,7 +101,8 @@ class EMEstimator(BaseEstimator):
         try:
             if cpus > 1:
                 ctx = _get_mp_context()
-                pool = ctx.Pool(processes=cpus, initializer=_init_worker, initargs=(pattern_data, model))
+                pool = ctx.Pool(processes=cpus, initializer=_init_worker,
+                                initargs=(pattern_data, model))
             estimates = []
             for t_pars, c_pars in zip(initial_time_pars, initial_channel_pars):
                 estimates.append(self.em(
