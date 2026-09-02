@@ -125,7 +125,7 @@ class PCA(Projector):
         vcov_mat = np.zeros((n_ch, n_ch), dtype=np.float64)
         count = 0
         for x_i in arr:
-            x_i = x_i[:, ~np.isnan(x_i[0, :])]
+            x_i = x_i[:, ~np.isnan(x_i[0, :])] # noqa: PLW2901
             if x_i.shape[1] > x_i.shape[0]:
                 count += 1
                 cov_i = (x_i @ x_i.T) / (x_i.shape[1] - 1)
