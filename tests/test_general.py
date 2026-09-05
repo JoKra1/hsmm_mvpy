@@ -103,7 +103,7 @@ def test_basic_operations(sfreq, width):
                                 trial_data.sfreq,
                                 trial_data.cross_corr.dtype)
 
-        # Compute pmf for intervals 1 and 2 manually and extract the fourth density
+        # Compute pmf for intervals 1 and 2 manually and extract the fifth density
         # which should be set to zero by `location_pdf` for a location of five but is not!
         pmf1 = model.distribution.pdf(np.arange(max_duration),
                                     model.time_pars[0][1,0],
