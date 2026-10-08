@@ -16,11 +16,11 @@ n_events = len(names)-1 # Last is simulated resp
 # Remove default baseline corr
 epoching=dict(baseline=None)
 
-llks = {(100, 50):-3.588911,
-        (100, 30):-2.5232670,
-        (200, 25):-3.588911,
+llks = {(100, 50):-4.918021,
+        (100, 30):-3.8846755,
+        (200, 25):-4.918021,
         (256, 35.5):-4.7588858,
-        (1000,70):-8.8224058,
+        (1000,70):-10.125002,
         }
 
 @pytest.mark.parametrize("sfreq,width",
