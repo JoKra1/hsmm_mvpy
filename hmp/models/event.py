@@ -986,7 +986,6 @@ class EventModel(BaseModel):
         """
         pmf = np.zeros([max_duration, n_stages], dtype=dtype)  # Gamma pmf for each stage scale
         locations_samples = self._time_to_samples(self.locations, sfreq)
-        locations_samples[1:-1] -= self.distribution.shift
         for stage in range(n_stages):
             pmf[:, stage] = np.concatenate(
                 (
